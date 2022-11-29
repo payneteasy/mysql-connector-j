@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2002, 2017, Oracle and/or its affiliates. All rights reserved.
+  Copyright (c) 2002, 2018, Oracle and/or its affiliates. All rights reserved.
 
   The MySQL Connector/J is licensed under the terms of the GPLv2
   <http://www.gnu.org/licenses/old-licenses/gpl-2.0.html>, like most MySQL Connectors.
@@ -1771,8 +1771,8 @@ public class StatementRegressionTest extends BaseTestCase {
 
             long offsetDifference = clientTimezoneOffsetMillis - serverTimezoneOffsetMillis;
 
-            SimpleDateFormat timestampFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
-            SimpleDateFormat timeFormat = new SimpleDateFormat("HH:mm:ss");
+            SimpleDateFormat timestampFormat = TimeUtil.getSimpleDateFormat(null, "yyyy-MM-dd HH:mm:ss", null, null);
+            SimpleDateFormat timeFormat = TimeUtil.getSimpleDateFormat(null, "HH:mm:ss", null, null);
 
             long pointInTime = timestampFormat.parse("2004-10-04 09:19:00").getTime();
 
@@ -3242,6 +3242,7 @@ public class StatementRegressionTest extends BaseTestCase {
             conn2 = super.getConnectionWithProps(props);
             this.pstmt = conn2.prepareStatement("INSERT INTO testBug24344 (t1) VALUES (?)");
             Calendar c = Calendar.getInstance();
+            c.set(Calendar.MILLISECOND, 789);
             this.pstmt.setTimestamp(1, new Timestamp(c.getTime().getTime()));
             this.pstmt.execute();
             this.pstmt.close();
@@ -3873,8 +3874,7 @@ public class StatementRegressionTest extends BaseTestCase {
             assertEquals(earlier, datetimeSeconds1);
             assertEquals(earlier, timestampSeconds1);
 
-            SimpleDateFormat sdf = new SimpleDateFormat("MM/dd/yyyy HH:mm z");
-            sdf.setTimeZone(TimeZone.getTimeZone("America/New_York"));
+            SimpleDateFormat sdf = TimeUtil.getSimpleDateFormat(null, "MM/dd/yyyy HH:mm z", null, TimeZone.getTimeZone("America/New_York"));
             System.out.println(sdf.format(ts2));
             System.out.println(sdf.format(ts1));
         } finally {
@@ -6619,23 +6619,43 @@ public class StatementRegressionTest extends BaseTestCase {
      *             if the test fails.
      */
     public void testBug18091639() throws SQLException {
-        String str = TimeUtil.formatNanos(1, true, false);
-        assertEquals("000000001", str);
+        String str = TimeUtil.formatNanos(900000000, true, 1);
+        assertEquals("9", str);
 
-        str = TimeUtil.formatNanos(1, true, true);
+        str = TimeUtil.formatNanos(90000000, true, 1);
         assertEquals("0", str);
 
-        str = TimeUtil.formatNanos(1999, true, false);
-        assertEquals("000001999", str);
+        str = TimeUtil.formatNanos(900000000, true, 0);
+        assertEquals("0", str);
 
-        str = TimeUtil.formatNanos(1999, true, true);
+        assertThrows(SQLException.class, "fsp value must be in 0 to 6 range but was 9", new Callable<Void>() {
+            public Void call() throws Exception {
+                TimeUtil.formatNanos(1, true, 9);
+                return null;
+            }
+        });
+
+        str = TimeUtil.formatNanos(1, true, 6);
+        assertEquals("0", str);
+
+        str = TimeUtil.formatNanos(1999, true, 6);
         assertEquals("000001", str);
 
-        str = TimeUtil.formatNanos(1000000010, true, false);
-        assertEquals("00000001", str);
-
-        str = TimeUtil.formatNanos(1000000010, true, true);
+        str = TimeUtil.formatNanos(123999, true, 3);
         assertEquals("0", str);
+
+        str = TimeUtil.formatNanos(123999, true, 4);
+        assertEquals("0001", str);
+
+        assertThrows(SQLException.class, "nanos value must be in 0 to 999999999 range but was 1000000010", new Callable<Void>() {
+            public Void call() throws Exception {
+                TimeUtil.formatNanos(1000000010, true, 6);
+                return null;
+            }
+        });
+
+        str = TimeUtil.formatNanos(100000000, true, 6);
+        assertEquals("1", str);
     }
 
     /**
@@ -7264,9 +7284,9 @@ public class StatementRegressionTest extends BaseTestCase {
 
         try {
             TimeZone.setDefault(TimeZone.getTimeZone("America/Chicago")); // ~~ CST (UTC-06)
-            final SimpleDateFormat tsFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+            final SimpleDateFormat tsFormat = TimeUtil.getSimpleDateFormat(null, "yyyy-MM-dd HH:mm:ss", null, null);
             final Timestamp timestamp = new Timestamp(tsFormat.parse("2015-01-01 10:00:00").getTime());
-            final SimpleDateFormat tFormat = new SimpleDateFormat("HH:mm:ss");
+            final SimpleDateFormat tFormat = TimeUtil.getSimpleDateFormat(null, "HH:mm:ss", null, null);
             final Time time = new Time(tFormat.parse("10:00:00").getTime());
 
             // Test a number of time zones that coincide with 'GMT' on the some specifip point in time.
@@ -7370,7 +7390,8 @@ public class StatementRegressionTest extends BaseTestCase {
             return;
         }
 
-        Timestamp originalTs = new Timestamp(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS").parse("2014-12-31 23:59:59.999").getTime());
+        Timestamp originalTs = new Timestamp(
+                TimeUtil.getSimpleDateFormat(null, "yyyy-MM-dd HH:mm:ss.SSS", null, null).parse("2014-12-31 23:59:59.999").getTime());
         Timestamp roundedTs = new Timestamp(originalTs.getTime() + 1);
         Timestamp truncatedTs = new Timestamp(originalTs.getTime() - 999);
 
@@ -8534,5 +8555,186 @@ public class StatementRegressionTest extends BaseTestCase {
             testConn.close();
             assertEquals(0, testConn.getActiveStatementCount());
         } while ((useSPS = !useSPS) || (cachePS = !cachePS));
+    }
+
+    /**
+     * Tests fix for Bug#87534 - UNION ALL query fails when useServerPrepStmts=true on database connection.
+     * Base Bug#27422376 - NEWDATE TYPE IS LEAKING OUT, fixed in MySQL 5.7.22.
+     */
+    public void testBug87534() throws Exception {
+        if (versionMeetsMinimum(5, 7) && !versionMeetsMinimum(5, 7, 22)) {
+            return;
+        }
+
+        System.out.println("running");
+
+        boolean useSPS = false;
+        do {
+            Connection testConn = getConnectionWithProps("useServerPrepStmts=" + Boolean.toString(useSPS));
+
+            this.pstmt = testConn.prepareStatement("SELECT CAST(NOW() AS DATE) UNION SELECT CAST(NOW() AS DATE)");
+            this.rs = this.pstmt.executeQuery();
+            assertTrue(this.rs.next());
+            assertFalse(this.rs.next());
+            this.pstmt.close();
+
+            this.pstmt = testConn.prepareStatement("SELECT CAST(NOW() AS DATE) UNION ALL SELECT CAST(NOW() AS DATE)");
+            this.rs = this.pstmt.executeQuery();
+            assertTrue(this.rs.next());
+            assertTrue(this.rs.next());
+            assertFalse(this.rs.next());
+            this.pstmt.close();
+
+            createTable("testBug87534", "(dt DATE DEFAULT NULL)");
+            this.stmt.execute("INSERT INTO testBug87534 VALUES ('2018-01-01')");
+
+            this.pstmt = testConn.prepareStatement("SELECT dt FROM testBug87534 UNION SELECT dt FROM testBug87534");
+            this.rs = this.pstmt.executeQuery();
+            assertTrue(this.rs.next());
+            assertFalse(this.rs.next());
+            this.pstmt.close();
+
+            this.pstmt = testConn.prepareStatement("SELECT dt FROM testBug87534 UNION ALL SELECT dt FROM testBug87534");
+            this.rs = this.pstmt.executeQuery();
+            assertTrue(this.rs.next());
+            assertTrue(this.rs.next());
+            assertFalse(this.rs.next());
+            this.pstmt.close();
+
+            testConn.close();
+        } while (useSPS = !useSPS);
+    }
+
+    /**
+     * Tests fix for Bug#84813 (25501750), rewriteBatchedStatements fails in INSERT.
+     */
+    public void testBug84813() throws Exception {
+        createTable("testBug84813", "(id INT AUTO_INCREMENT PRIMARY KEY, z INT, n INT)");
+
+        boolean rwBS = false;
+        boolean useSPS = false;
+
+        do {
+            final String testCase = String.format("Case [rwBS: %s, useSPS: %s]", rwBS ? "Y" : "N", useSPS ? "Y" : "N");
+
+            Properties props = new Properties();
+            props.setProperty("rewriteBatchedStatements", Boolean.toString(rwBS));
+            props.setProperty("useServerPrepStmts", Boolean.toString(useSPS));
+            props.setProperty("emulateUnsupportedPstmts", "false");
+
+            Connection testConn = getConnectionWithProps(props);
+
+            for (int r = 1; r <= 5; r++) {
+                for (String odku : new String[] { "", " ON DUPLICATE KEY UPDATE id = -id" }) {
+                    final String testCaseExtra = odku.length() > 0 ? "/ODKU" : "/non-ODKU";
+                    this.pstmt = testConn.prepareStatement("INSERT INTO testBug84813 VALUES (NULL, 0, 0) /* Comment (?) */" + odku);
+                    for (int i = 0; i < r; i++) {
+                        this.pstmt.addBatch();
+                    }
+                    this.pstmt.executeBatch();
+                    testBug84813CheckAndReset(testCase + testCaseExtra, r, true);
+                    this.pstmt.close();
+
+                    this.pstmt = testConn.prepareStatement("INSERT INTO testBug84813 VALUES (NULL, ?, ?) /* Comment (?) */ " + odku);
+                    for (int i = 0; i < r; i++) {
+                        this.pstmt.setInt(1, 0);
+                        this.pstmt.setInt(2, i);
+                        this.pstmt.addBatch();
+                    }
+                    this.pstmt.executeBatch();
+                    testBug84813CheckAndReset(testCase + testCaseExtra, r, false);
+                    this.pstmt.close();
+                }
+            }
+
+            testConn.close();
+        } while ((rwBS = !rwBS) || (useSPS = !useSPS));
+    }
+
+    private void testBug84813CheckAndReset(String testCase, int repetitions, boolean allZero) throws Exception {
+        this.rs = this.stmt.executeQuery("SELECT * FROM testBug84813");
+        for (int i = 0; i < repetitions; i++) {
+            assertTrue(this.rs.next());
+            assertEquals(testCase, i + 1, this.rs.getInt(1));
+            assertEquals(testCase, 0, this.rs.getInt(2));
+            assertEquals(testCase, allZero ? 0 : i, this.rs.getInt(3));
+        }
+        assertFalse(this.rs.next());
+        this.stmt.execute("TRUNCATE TABLE testBug84813");
+    }
+
+    /**
+     * Tests fix for Bug#81063 (23098159), w/ rewriteBatchedStatements, when 2 tables involved, the rewriting not correct.
+     */
+    public void testBug81063() throws Exception {
+        createTable("testBug81063a", "(c1 INT, c2 INT, c3 INT DEFAULT 0, c4 INT DEFAULT 0)");
+        createTable("testBug81063b", "(c1 INT, c2 INT)");
+
+        boolean rwBS = false;
+        boolean useSPS = false;
+
+        do {
+            final String testCase = String.format("Case [rwBS: %s, useSPS: %s]", rwBS ? "Y" : "N", useSPS ? "Y" : "N");
+
+            Properties props = new Properties();
+            props.setProperty("emulateUnsupportedPstmts", "true");
+            props.setProperty("allowMultiQueries", "true");
+            props.setProperty("rewriteBatchedStatements", Boolean.toString(rwBS));
+            props.setProperty("useServerPrepStmts", Boolean.toString(useSPS));
+
+            Connection testConn = getConnectionWithProps(props);
+
+            for (String sql : new String[] { "INSERT INTO testBug81063a VALUES (?, ?, ?, ?)",
+                    "INSERT INTO testBug81063a (c1, c2) VALUES (?, ?); INSERT INTO testBug81063b VALUES (?, ?)" }) {
+                int valsTbl1 = 4;
+                int valsTbl2 = 0;
+                if (sql.indexOf(';') != -1) {
+                    valsTbl1 = 2;
+                    valsTbl2 = 2;
+                }
+                for (int r = 1; r <= 5; r++) {
+                    this.pstmt = testConn.prepareStatement(sql);
+                    for (int i = 0; i < r; i++) {
+                        this.pstmt.setLong(1, 4 * i + 1);
+                        this.pstmt.setLong(2, 4 * i + 2);
+                        this.pstmt.setLong(3, 4 * i + 3);
+                        this.pstmt.setLong(4, 4 * i + 4);
+                        this.pstmt.addBatch();
+                    }
+                    this.pstmt.executeBatch();
+                    this.pstmt.close();
+                    testBug81063CheckAndReset(testCase, valsTbl1, valsTbl2, r);
+                }
+            }
+            testConn.close();
+        } while ((rwBS = !rwBS) || (useSPS = !useSPS));
+    }
+
+    private void testBug81063CheckAndReset(String testCase, int t1Vals, int t2Vals, int repetitions) throws Exception {
+        testCase += " (" + repetitions + " x " + t1Vals + "/" + t2Vals + ")";
+
+        if (t1Vals > 0) {
+            this.rs = this.stmt.executeQuery("SELECT * FROM testBug81063a");
+            for (int r = 1, e = 1; r <= repetitions; r++, e += 4 - t1Vals) {
+                assertTrue(testCase, this.rs.next());
+                for (int c = 1; c <= t1Vals; c++, e++) {
+                    assertEquals(testCase, e, this.rs.getInt(c));
+                }
+            }
+            assertFalse(this.rs.next());
+        }
+        this.stmt.execute("TRUNCATE TABLE testBug81063a");
+
+        if (t2Vals > 0) {
+            this.rs = this.stmt.executeQuery("SELECT * FROM testBug81063b");
+            for (int r = 1, e = 3; r <= repetitions; r++, e += 4 - t2Vals) {
+                assertTrue(testCase, this.rs.next());
+                for (int c = 1; c <= t2Vals; c++, e++) {
+                    assertEquals(testCase, e, this.rs.getInt(c));
+                }
+            }
+            assertFalse(this.rs.next());
+        }
+        this.stmt.execute("TRUNCATE TABLE testBug81063b");
     }
 }

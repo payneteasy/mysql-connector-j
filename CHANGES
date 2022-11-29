@@ -1,6 +1,29 @@
 # Changelog
 # https://dev.mysql.com/doc/relnotes/connector-j/5.1/en/
 
+Version 5.1.47
+
+  - Fix for Bug#28449601, MASTER : UNITTEST FOR BUG#22305979 (TESTBUG22305979) STILL FAILS ON QA SETUP.
+
+  - Fix for Bug#81063 (23098159), w/ rewriteBatchedStatements, when 2 tables involved, the rewriting not correct.
+
+  - Fix for Bug#84813 (25501750), rewriteBatchedStatements fails in INSERT.
+
+  - Fix for Bug#81196 (23227334), CONNECTOR/J NOT FOLLOWING DATABASE CHARACTER SET.
+
+  - Fix for Bug#72609 (18749544), SETDATE() NOT USING A PROLEPTIC GREGORIAN CALENDAR.
+
+  - Fix for Bug#87534 (26730196), UNION ALL query fails when useServerPrepStmts=true on database connection.
+    Test case only. Base bug fixed in MySQL 5.7.22.
+
+  - Fix for Bug#89948 (27658489), Batched statements are not committed for useLocalTransactionState=true.
+
+  - Fix for BUG#80532 (22847443), ENCODING OF RESULTSET.UPDATEROW IS BROKEN FOR NON ASCII CHARCTERS.
+
+  - Fix for BUG#22305979, WRONG RECORD UPDATED IF SENDFRACTIONALSECONDS=FALSE AND SMT IS SCROLLABLE.
+
+  - Fix for BUG#90024 (27677574), SOME TESTS FAILED AGAINST MYSQL 8.0.5 BECAUSE OF DEPRECATED FEATURES REMOVAL.
+
 Version 5.1.46
 
   - WL#11629, Change caching_sha2_password padding.

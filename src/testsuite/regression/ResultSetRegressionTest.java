@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2002, 2017, Oracle and/or its affiliates. All rights reserved.
+  Copyright (c) 2002, 2018, Oracle and/or its affiliates. All rights reserved.
 
   The MySQL Connector/J is licensed under the terms of the GPLv2
   <http://www.gnu.org/licenses/old-licenses/gpl-2.0.html>, like most MySQL Connectors.
@@ -41,9 +41,9 @@ import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.sql.Time;
 import java.sql.Timestamp;
 import java.sql.Types;
-import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.GregorianCalendar;
@@ -69,6 +69,7 @@ import com.mysql.jdbc.MysqlDataTruncation;
 import com.mysql.jdbc.NotUpdatable;
 import com.mysql.jdbc.SQLError;
 import com.mysql.jdbc.StatementImpl;
+import com.mysql.jdbc.TimeUtil;
 import com.mysql.jdbc.Util;
 import com.mysql.jdbc.log.StandardLogger;
 
@@ -4210,6 +4211,10 @@ public class ResultSetRegressionTest extends BaseTestCase {
     }
 
     public void testBug48820() throws Exception {
+        if (versionMeetsMinimum(8, 0, 5)) {
+            // old_passwords and PASSWORD() were removed since MySQL 8.0.5
+            return;
+        }
 
         CachedRowSet crs;
 
@@ -4860,7 +4865,8 @@ public class ResultSetRegressionTest extends BaseTestCase {
         testStmt.executeUpdate("INSERT INTO testBug80522 VALUES ('00:00:00', '0000-00-00', 'Zeros')");
         final ResultSet testRs = testStmt.executeQuery("SELECT * FROM testBug80522");
         assertTrue(testRs.next());
-        assertEquals(new Timestamp(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").parse("1970-01-01 00:00:00").getTime()), testRs.getTimestamp(1));
+        assertEquals(new Timestamp(TimeUtil.getSimpleDateFormat(null, "yyyy-MM-dd HH:mm:ss", null, null).parse("1970-01-01 00:00:00").getTime()),
+                testRs.getTimestamp(1));
         assertThrows(SQLException.class, "Value '0000-00-00' can not be represented as java\\.sql\\.Timestamp", new Callable<Void>() {
             public Void call() throws Exception {
                 System.out.println(testRs.getTimestamp(2));
@@ -5427,5 +5433,464 @@ public class ResultSetRegressionTest extends BaseTestCase {
             testConn.close();
             props.setProperty("useFastDateParsing", "false");
         }
+    }
+
+    /**
+     * Tests fix for Bug#22305979, WRONG RECORD UPDATED IF SENDFRACTIONALSECONDS=FALSE AND SMT IS SCROLLABLE.
+     */
+    public void testBug22305979() throws Exception {
+        if (!versionMeetsMinimum(5, 6, 4)) {
+            return; // fractional seconds are not supported in previous versions
+        }
+
+        /* Test from bug report */
+        Connection testConn2;
+        Properties props = new Properties();
+        props.setProperty("useSSL", "false");
+        props.setProperty("allowPublicKeyRetrieval", "true");
+        props.setProperty("sendFractionalSeconds", "false");
+
+        for (String serverTimezone : new String[] { null, "GMT", "Asia/Calcutta" }) {
+            if (serverTimezone != null) {
+                props.setProperty("serverTimezone", serverTimezone);
+            }
+
+            testConn2 = getConnectionWithProps(props);
+
+            Timestamp ts2 = new Timestamp(TimeUtil.getSimpleDateFormat(null, "yyyy-MM-dd HH:mm:ss.SSS", null, null).parse("2019-12-30 13:59:57.789").getTime());
+            createTable("testBug22305979_orig_1",
+                    "(id int, tmp int,ts1 timestamp(6),ts2 timestamp(3) NOT NULL DEFAULT '2001-01-01 00:00:01',primary key(id,ts1) )");
+            this.stmt.execute("insert into testBug22305979_orig_1 values (1,100,'2014-12-31 23:59:59.123','2015-12-31 23:59:59.456')");
+            this.stmt.execute("insert into testBug22305979_orig_1 values (1,200,'2014-12-31 23:59:59','2022-12-31 23:59:59.456')");
+
+            Statement scrollableStmt = testConn2.createStatement(ResultSet.TYPE_SCROLL_INSENSITIVE, ResultSet.CONCUR_UPDATABLE);
+            ResultSet rs1 = scrollableStmt.executeQuery("SELECT * FROM testBug22305979_orig_1 where id=1 and ts1='2014-12-31 23:59:59.123'");
+            if (rs1.next()) {
+                rs1.updateTimestamp(3, ts2); //Updating part of primary key
+                rs1.updateRow();
+            }
+
+            this.rs = scrollableStmt.executeQuery("SELECT * FROM testBug22305979_orig_1 order by tmp");
+            assertTrue(this.rs.next());
+            assertEquals(1, this.rs.getInt(1));
+            assertEquals(100, this.rs.getInt(2));
+            assertEquals("2019-12-30 13:59:57.0", this.rs.getString(3));
+            assertEquals("2015-12-31 23:59:59.456", this.rs.getString(4));
+            assertTrue(this.rs.next());
+            assertEquals(1, this.rs.getInt(1));
+            assertEquals(200, this.rs.getInt(2));
+            assertEquals("2014-12-31 23:59:59.0", this.rs.getString(3));
+            assertEquals("2022-12-31 23:59:59.456", this.rs.getString(4));
+
+            testConn2.close();
+        }
+
+        /* Unified test */
+
+        // Original values we insert
+        Timestamp[] ts_ins = new Timestamp[] { //
+                Timestamp.valueOf("2018-07-09 13:14:15"), //
+                Timestamp.valueOf("2018-07-09 13:14:15.1"), //
+                Timestamp.valueOf("2018-07-09 13:14:15.12"), //
+                Timestamp.valueOf("2018-07-09 13:14:15.123"), //
+                Timestamp.valueOf("2018-07-09 13:14:15.1234"), //
+                Timestamp.valueOf("2018-07-09 13:14:15.12345"), //
+                Timestamp.valueOf("2018-07-09 13:14:15.123456"), //
+                Timestamp.valueOf("2018-07-09 13:14:15.1234567"), //
+                Timestamp.valueOf("2018-07-09 13:14:15.12345678"), //
+                Timestamp.valueOf("2018-07-09 13:14:15.999999999") };
+
+        // Values we expect in DB after insert operation if TIME_TRUNCATE_FRACTIONAL sql_mode is unset
+        Timestamp[] ts_ins_expected_round = new Timestamp[] { //
+                Timestamp.valueOf("2018-07-09 13:14:15"), //
+                Timestamp.valueOf("2018-07-09 13:14:15.1"), //
+                Timestamp.valueOf("2018-07-09 13:14:15.12"), //
+                Timestamp.valueOf("2018-07-09 13:14:15.123"), //
+                Timestamp.valueOf("2018-07-09 13:14:15.1234"), //
+                Timestamp.valueOf("2018-07-09 13:14:15.12345"), //
+                Timestamp.valueOf("2018-07-09 13:14:15.123456"), //
+                Timestamp.valueOf("2018-07-09 13:14:15.123457"), //
+                Timestamp.valueOf("2018-07-09 13:14:15.123457"), //
+                Timestamp.valueOf("2018-07-09 13:14:16.0") };
+
+        // Values we expect in DB after insert operation if TIME_TRUNCATE_FRACTIONAL sql_mode is set
+        Timestamp[] ts_ins_expected_truncate = new Timestamp[] { //
+                Timestamp.valueOf("2018-07-09 13:14:15"), //
+                Timestamp.valueOf("2018-07-09 13:14:15.1"), //
+                Timestamp.valueOf("2018-07-09 13:14:15.12"), //
+                Timestamp.valueOf("2018-07-09 13:14:15.123"), //
+                Timestamp.valueOf("2018-07-09 13:14:15.1234"), //
+                Timestamp.valueOf("2018-07-09 13:14:15.12345"), //
+                Timestamp.valueOf("2018-07-09 13:14:15.123456"), //
+                Timestamp.valueOf("2018-07-09 13:14:15.123456"), //
+                Timestamp.valueOf("2018-07-09 13:14:15.123456"), //
+                Timestamp.valueOf("2018-07-09 13:14:15.999999") };
+
+        // Values we expect in DB after insert operation if sendFractionalSeconds=false
+        Timestamp[] ts_ins_expected_not_sendFractionalSeconds = new Timestamp[] { //
+                Timestamp.valueOf("2018-07-09 13:14:15"), //
+                Timestamp.valueOf("2018-07-09 13:14:15.0"), //
+                Timestamp.valueOf("2018-07-09 13:14:15.0"), //
+                Timestamp.valueOf("2018-07-09 13:14:15.0"), //
+                Timestamp.valueOf("2018-07-09 13:14:15.0"), //
+                Timestamp.valueOf("2018-07-09 13:14:15.0"), //
+                Timestamp.valueOf("2018-07-09 13:14:15.0"), //
+                Timestamp.valueOf("2018-07-09 13:14:15.0"), //
+                Timestamp.valueOf("2018-07-09 13:14:15.0"), //
+                Timestamp.valueOf("2018-07-09 13:14:15.0") };
+
+        // Original values we pass to update operation
+        Timestamp[] ts_upd = new Timestamp[] { //
+                Timestamp.valueOf("2018-07-09 03:14:15"), //
+                Timestamp.valueOf("2018-07-09 03:14:15.1"), //
+                Timestamp.valueOf("2018-07-09 03:14:15.12"), //
+                Timestamp.valueOf("2018-07-09 03:14:15.123"), //
+                Timestamp.valueOf("2018-07-09 03:14:15.1234"), //
+                Timestamp.valueOf("2018-07-09 03:14:15.12345"), //
+                Timestamp.valueOf("2018-07-09 03:14:15.123456"), //
+                Timestamp.valueOf("2018-07-09 03:14:15.1234567"), //
+                Timestamp.valueOf("2018-07-09 03:14:15.12345678"), //
+                Timestamp.valueOf("2018-07-09 03:14:15.999999999") };
+
+        // Values we expect in DB after update operation if TIME_TRUNCATE_FRACTIONAL sql_mode is unset
+        Timestamp[] ts_upd_expected_round = new Timestamp[] { //
+                Timestamp.valueOf("2018-07-09 03:14:15"), //
+                Timestamp.valueOf("2018-07-09 03:14:15.1"), //
+                Timestamp.valueOf("2018-07-09 03:14:15.12"), //
+                Timestamp.valueOf("2018-07-09 03:14:15.123"), //
+                Timestamp.valueOf("2018-07-09 03:14:15.1234"), //
+                Timestamp.valueOf("2018-07-09 03:14:15.12345"), //
+                Timestamp.valueOf("2018-07-09 03:14:15.123456"), //
+                Timestamp.valueOf("2018-07-09 03:14:15.123457"), //
+                Timestamp.valueOf("2018-07-09 03:14:15.123457"), //
+                Timestamp.valueOf("2018-07-09 03:14:16.0") };
+
+        // Values we expect in DB after update operation if TIME_TRUNCATE_FRACTIONAL sql_mode is set
+        Timestamp[] ts_upd_expected_truncate = new Timestamp[] { //
+                Timestamp.valueOf("2018-07-09 03:14:15"), //
+                Timestamp.valueOf("2018-07-09 03:14:15.1"), //
+                Timestamp.valueOf("2018-07-09 03:14:15.12"), //
+                Timestamp.valueOf("2018-07-09 03:14:15.123"), //
+                Timestamp.valueOf("2018-07-09 03:14:15.1234"), //
+                Timestamp.valueOf("2018-07-09 03:14:15.12345"), //
+                Timestamp.valueOf("2018-07-09 03:14:15.123456"), //
+                Timestamp.valueOf("2018-07-09 03:14:15.123457"), //
+                Timestamp.valueOf("2018-07-09 03:14:15.123457"), //
+                Timestamp.valueOf("2018-07-09 03:14:15.999999") };
+
+        // Values we expect in DB after update operation if sendFractionalSeconds=false
+        Timestamp[] ts_upd_expected_not_sendFractionalSeconds = new Timestamp[] { //
+                Timestamp.valueOf("2018-07-09 03:14:15"), //
+                Timestamp.valueOf("2018-07-09 03:14:15.0"), //
+                Timestamp.valueOf("2018-07-09 03:14:15.0"), //
+                Timestamp.valueOf("2018-07-09 03:14:15.0"), //
+                Timestamp.valueOf("2018-07-09 03:14:15.0"), //
+                Timestamp.valueOf("2018-07-09 03:14:15.0"), //
+                Timestamp.valueOf("2018-07-09 03:14:15.0"), //
+                Timestamp.valueOf("2018-07-09 03:14:15.0"), //
+                Timestamp.valueOf("2018-07-09 03:14:15.0"), //
+                Timestamp.valueOf("2018-07-09 03:14:15.0") };
+
+        Connection testConn;
+
+        boolean sqlModeTimeTruncateFractional = false;
+        boolean sendFractionalSeconds = false;
+        boolean useServerPrepStmts = false;
+        boolean useLegacyDatetimeCode = false;
+        boolean useJDBCCompliantTimezoneShift = false;
+        boolean useGmtMillisForDatetimes = false;
+        boolean useSSPSCompatibleTimezoneShift = false;
+        boolean useFastDateParsing = false;
+
+        do {
+            // TIME_TRUNCATE_FRACTIONAL was added in MySQL 8.0
+            if (sqlModeTimeTruncateFractional && !versionMeetsMinimum(8, 0)) {
+                continue;
+            }
+            for (String serverTimezone : new String[] { null, "GMT", "Asia/Calcutta" }) {
+                if (serverTimezone != null) {
+                    props.setProperty("serverTimezone", serverTimezone);
+                } else {
+                    props.remove("serverTimezone");
+                }
+
+                final String testCase = String.format(
+                        "Case: [TIME_TRUNCATE_FRACTIONAL=%s, sendFractionalSeconds=%s, useServerPrepStmts=%s," + " useLegacyDatetimeCode=%s,"
+                                + " useJDBCCompliantTimezoneShift=%s, useGmtMillisForDatetimes=%s, useSSPSCompatibleTimezoneShift=%s,"
+                                + " useFastDateParsing=%s, serverTimezone=%s]",
+                        sqlModeTimeTruncateFractional ? "Y" : "N", sendFractionalSeconds ? "Y" : "N", useServerPrepStmts ? "Y" : "N",
+                        useLegacyDatetimeCode ? "Y" : "N", useJDBCCompliantTimezoneShift ? "Y" : "N", useGmtMillisForDatetimes ? "Y" : "N",
+                        useSSPSCompatibleTimezoneShift ? "Y" : "N", useFastDateParsing ? "Y" : "N", serverTimezone);
+                System.out.println(testCase);
+
+                String sqlMode = getMysqlVariable("sql_mode");
+                sqlMode = removeSqlMode("TIME_TRUNCATE_FRACTIONAL", sqlMode);
+                if (sqlModeTimeTruncateFractional) {
+                    if (sqlMode.length() > 0) {
+                        sqlMode += ",";
+                    }
+                    sqlMode += "TIME_TRUNCATE_FRACTIONAL";
+                }
+
+                props.setProperty("sessionVariables", "sql_mode='" + sqlMode + "'");
+                props.setProperty("sendFractionalSeconds", "" + sendFractionalSeconds);
+                props.setProperty("useServerPrepStmts", "" + useServerPrepStmts);
+                props.setProperty("useLegacyDatetimeCode", "" + useLegacyDatetimeCode);
+                props.setProperty("useJDBCCompliantTimezoneShift", "" + useJDBCCompliantTimezoneShift);
+                props.setProperty("useGmtMillisForDatetimes", "" + useGmtMillisForDatetimes);
+                props.setProperty("useSSPSCompatibleTimezoneShift", "" + useSSPSCompatibleTimezoneShift);
+                props.setProperty("useFastDateParsing", "" + useFastDateParsing);
+
+                testConn = getConnectionWithProps(props);
+
+                // specifying different fractional length
+                for (int len = 0; len < 10; len++) {
+
+                    int fieldLen = len > 6 ? 6 : len;
+
+                    String tableName = "testBug22305979_" + len;
+                    createTable(tableName,
+                            "(id INTEGER, dt DATETIME" + (fieldLen == 0 ? "" : "(" + fieldLen + ")") + ", ts TIMESTAMP"
+                                    + (fieldLen == 0 ? "" : "(" + fieldLen + ")") + ", tm TIME" + (fieldLen == 0 ? "" : "(" + fieldLen + ")")
+                                    + ", PRIMARY KEY(id,dt,ts,tm))");
+
+                    Statement st = testConn.createStatement(ResultSet.TYPE_SCROLL_INSENSITIVE, ResultSet.CONCUR_UPDATABLE);
+                    this.rs = st.executeQuery("SELECT id,dt,ts,tm FROM " + tableName + " FOR UPDATE");
+                    this.rs.next(); // No rows
+                    this.rs.moveToInsertRow();
+                    this.rs.updateInt("id", 1);
+                    this.rs.updateTimestamp("dt", ts_ins[len]);
+                    this.rs.updateTimestamp("ts", ts_ins[len]);
+                    this.rs.updateTime("tm", new Time(ts_ins[len].getTime()));
+                    this.rs.insertRow();
+                    assertTrue(testCase, this.rs.last());
+
+                    // checking only seconds and nanos, other date parts are not relevant to this bug
+                    Calendar c_exp = new GregorianCalendar();
+                    c_exp.setTime(sendFractionalSeconds ? (sqlModeTimeTruncateFractional ? ts_ins_expected_truncate[len] : ts_ins_expected_round[len])
+                            : ts_ins_expected_not_sendFractionalSeconds[len]);
+                    Calendar c_res = new GregorianCalendar();
+                    c_res.setTime(this.rs.getTimestamp("dt"));
+                    assertEquals(testCase, c_exp.get(Calendar.SECOND), c_res.get(Calendar.SECOND));
+                    assertEquals(testCase, c_exp.get(Calendar.MILLISECOND), c_res.get(Calendar.MILLISECOND));
+                    c_res.setTime(this.rs.getTimestamp("ts"));
+                    assertEquals(testCase, c_exp.get(Calendar.SECOND), c_res.get(Calendar.SECOND));
+                    assertEquals(testCase, c_exp.get(Calendar.MILLISECOND), c_res.get(Calendar.MILLISECOND));
+
+                    // TODO java.sql.Time does not provide any way for setting/getting milliseconds and removes them from toString() method.
+                    // So the rs.updateTime(String columnName, java.sql.Time x) will always truncate milliseconds. Probably it is a bug because
+                    // java.sql.Time contains milliseconds internally. We have a Bug#76775 feature request about that.
+                    if (sendFractionalSeconds) {
+                        c_exp.setTime(ts_ins_expected_truncate[len]);
+                    }
+                    c_res.setTime(this.rs.getTime("tm"));
+                    assertEquals(testCase, c_exp.get(Calendar.SECOND), c_res.get(Calendar.SECOND));
+                    assertEquals(testCase, 0, c_res.get(Calendar.MILLISECOND));
+
+                    this.rs.updateTimestamp("dt", ts_upd[len]);
+                    this.rs.updateTimestamp("ts", ts_upd[len]);
+                    this.rs.updateTime("tm", new Time(ts_upd[len].getTime()));
+                    this.rs.updateRow();
+                    c_exp.setTime(sendFractionalSeconds ? (sqlModeTimeTruncateFractional ? ts_upd_expected_truncate[len] : ts_upd_expected_round[len])
+                            : ts_upd_expected_not_sendFractionalSeconds[len]);
+                    c_res.setTime(this.rs.getTimestamp("dt"));
+                    assertEquals(testCase, c_exp.get(Calendar.SECOND), c_res.get(Calendar.SECOND));
+                    assertEquals(testCase, c_exp.get(Calendar.MILLISECOND), c_res.get(Calendar.MILLISECOND));
+                    c_res.setTime(this.rs.getTimestamp("ts"));
+                    assertEquals(testCase, c_exp.get(Calendar.SECOND), c_res.get(Calendar.SECOND));
+                    assertEquals(testCase, c_exp.get(Calendar.MILLISECOND), c_res.get(Calendar.MILLISECOND));
+
+                    if (sendFractionalSeconds) {
+                        c_exp.setTime(ts_upd_expected_truncate[len]);
+                    }
+                    c_res.setTime(this.rs.getTime("tm"));
+                    assertEquals(testCase, c_exp.get(Calendar.SECOND), c_res.get(Calendar.SECOND));
+                    assertEquals(testCase, 0, c_res.get(Calendar.MILLISECOND));
+
+                    st.close();
+                }
+
+                testConn.close();
+            }
+        } while ((sqlModeTimeTruncateFractional = !sqlModeTimeTruncateFractional) || (sendFractionalSeconds = !sendFractionalSeconds)
+                || (useServerPrepStmts = !useServerPrepStmts) || (useLegacyDatetimeCode = !useLegacyDatetimeCode)
+                || (useJDBCCompliantTimezoneShift = !useJDBCCompliantTimezoneShift) || (useGmtMillisForDatetimes = !useGmtMillisForDatetimes)
+                || (useSSPSCompatibleTimezoneShift = !useSSPSCompatibleTimezoneShift) || (useFastDateParsing = !useFastDateParsing));
+
+    }
+
+    /**
+     * Tests fix for Bug#80532 (22847443), ENCODING OF RESULTSET.UPDATEROW IS BROKEN FOR NON ASCII CHARCTERS.
+     */
+    public void testBug80532() throws Exception {
+        Properties props = new Properties();
+        props.setProperty("useSSL", "false");
+        props.setProperty("allowPublicKeyRetrieval", "true");
+
+        for (String enc : new String[] { "ISO8859_1", "UTF-8" }) {
+            for (String useSSPS : new String[] { "false", "true" }) {
+                final String testCase = String.format("Case: [characterEncoding=%s, useServerPrepStmts=%s]", enc, useSSPS);
+                System.out.println(testCase);
+
+                createTable("testBug80532", "(id char(50) NOT NULL, data longtext, num int, PRIMARY KEY (id,num)) CHARACTER SET "
+                        + (versionMeetsMinimum(5, 5) ? "utf8mb4" : "utf8"));
+
+                props.setProperty("characterEncoding", enc);
+                props.setProperty("useServerPrepStmts", useSSPS);
+
+                Connection c1 = getConnectionWithProps(props);
+
+                String id1 = "äöü";
+                String id2 = "öäü";
+                String data1 = "my data";
+                String data2 = "new data";
+
+                c1.createStatement().executeUpdate("INSERT INTO testBug80532(id,data,num) VALUES( '" + id1 + "', '" + data1 + "', 1 )");
+
+                Statement st = this.conn.createStatement(ResultSet.TYPE_SCROLL_SENSITIVE, ResultSet.CONCUR_UPDATABLE);
+                this.rs = st.executeQuery("select * From testBug80532"); // where id='" + id1 + "'"
+                this.rs.next();
+
+                System.out.println(this.rs.getString("id") + ", " + this.rs.getString("data"));
+                assertEquals(id1, this.rs.getString("id"));
+                assertEquals(data1, this.rs.getString("data"));
+                this.rs.updateString("data", data2);
+                this.rs.updateRow();
+                System.out.println(this.rs.getString("id") + ", " + this.rs.getString("data"));
+                assertEquals(id1, this.rs.getString("id"));
+                assertEquals(data2, this.rs.getString("data"));
+
+                this.rs.moveToInsertRow();
+                this.rs.updateString("id", id2);
+                this.rs.updateString("data", data1);
+                this.rs.updateInt("num", 2);
+                this.rs.insertRow();
+                assertTrue(this.rs.last());
+                System.out.println(this.rs.getString("id") + ", " + this.rs.getString("data"));
+                assertEquals(id2, this.rs.getString("id"));
+                assertEquals(data1, this.rs.getString("data"));
+
+                this.rs.updateString("id", id1);
+                this.rs.updateRow();
+                System.out.println(this.rs.getString("id") + ", " + this.rs.getString("data"));
+                assertEquals(id1, this.rs.getString("id"));
+                assertEquals(data1, this.rs.getString("data"));
+            }
+        }
+    }
+
+    /**
+     * Tests fix for Bug#72609 (18749544), SETDATE() NOT USING A PROLEPTIC GREGORIAN CALENDAR.
+     */
+    public void testBug72609() throws Exception {
+        GregorianCalendar prolepticGc = new GregorianCalendar();
+        prolepticGc.setGregorianChange(new Date(Long.MIN_VALUE));
+        prolepticGc.clear();
+        prolepticGc.set(Calendar.DAY_OF_MONTH, 8);
+        prolepticGc.set(Calendar.MONTH, Calendar.OCTOBER);
+        prolepticGc.set(Calendar.YEAR, 1582);
+
+        GregorianCalendar gc = new GregorianCalendar();
+        gc.clear();
+        gc.setTimeInMillis(prolepticGc.getTimeInMillis());
+
+        assertEquals(1582, gc.get(Calendar.YEAR));
+        assertEquals(8, gc.get(Calendar.MONTH));
+        assertEquals(28, gc.get(Calendar.DAY_OF_MONTH));
+
+        // TIMESTAMP can't represent dates before 1970-01-01, so we need to test only DATE and DATETIME types
+        createTable("testBug72609", "(d date, pd date, dt datetime, pdt datetime)");
+
+        Properties props = new Properties();
+        props.setProperty("useSSL", "false");
+        props.setProperty("allowPublicKeyRetrieval", "true");
+
+        boolean sendFractionalSeconds = false;
+        boolean useServerPrepStmts = false;
+        boolean useLegacyDatetimeCode = false;
+        boolean useJDBCCompliantTimezoneShift = false;
+        boolean useGmtMillisForDatetimes = false;
+        boolean useSSPSCompatibleTimezoneShift = false;
+        boolean useFastDateParsing = false;
+
+        do {
+
+            final String testCase = String.format(
+                    "Case: [sendFractionalSeconds=%s, useServerPrepStmts=%s," + " useLegacyDatetimeCode=%s," + " useJDBCCompliantTimezoneShift=%s,"
+                            + " useGmtMillisForDatetimes=%s," + " useSSPSCompatibleTimezoneShift=%s," + " useFastDateParsing=%s]",
+                    sendFractionalSeconds ? "Y" : "N", useServerPrepStmts ? "Y" : "N", useLegacyDatetimeCode ? "Y" : "N",
+                    useJDBCCompliantTimezoneShift ? "Y" : "N", useGmtMillisForDatetimes ? "Y" : "N", useSSPSCompatibleTimezoneShift ? "Y" : "N",
+                    useFastDateParsing ? "Y" : "N"
+
+            );
+            System.out.println(testCase);
+
+            props.setProperty("sendFractionalSeconds", "" + sendFractionalSeconds);
+            props.setProperty("useServerPrepStmts", "" + useServerPrepStmts);
+            props.setProperty("useLegacyDatetimeCode", "" + useLegacyDatetimeCode);
+            props.setProperty("useJDBCCompliantTimezoneShift", "" + useJDBCCompliantTimezoneShift);
+            props.setProperty("useGmtMillisForDatetimes", "" + useGmtMillisForDatetimes);
+            props.setProperty("useSSPSCompatibleTimezoneShift", "" + useSSPSCompatibleTimezoneShift);
+            props.setProperty("useFastDateParsing", "" + useFastDateParsing);
+
+            Connection c1 = getConnectionWithProps(props);
+            Statement st1 = c1.createStatement();
+
+            st1.execute("truncate table testBug72609");
+
+            java.sql.Date d1 = new java.sql.Date(prolepticGc.getTime().getTime());
+            Timestamp ts1 = new Timestamp(prolepticGc.getTime().getTime());
+
+            this.pstmt = c1.prepareStatement("insert into testBug72609 values(?,?,?,?)");
+            this.pstmt.setDate(1, d1);
+            this.pstmt.setDate(2, d1, prolepticGc);
+            this.pstmt.setTimestamp(3, ts1);
+            this.pstmt.setTimestamp(4, ts1, prolepticGc);
+            this.pstmt.execute();
+
+            /*
+             * Checking stored values by retrieving them as strings to avoid conversions on c/J side.
+             */
+            this.rs = st1.executeQuery("select DATE_FORMAT(d, '%Y-%m-%d') as d, DATE_FORMAT(pd, '%Y-%m-%d') as pd,"
+                    + " DATE_FORMAT(dt, '%Y-%m-%d %H:%i:%s.%f') as dt, DATE_FORMAT(pdt, '%Y-%m-%d %H:%i:%s.%f') as pdt from testBug72609");
+            this.rs.next();
+            System.out.println(this.rs.getString(1) + ", " + this.rs.getString(2) + ", " + this.rs.getString(3) + ", " + this.rs.getString(4));
+
+            assertEquals(testCase, "1582-09-28", this.rs.getString(1)); // according to Julian calendar
+            assertEquals(testCase, "1582-10-08", this.rs.getString(2)); // according to proleptic Gregorian calendar
+
+            // the exact day depends on adjustments between time zones, but that's not interesting for this test
+            assertTrue(testCase, this.rs.getString(3).startsWith("1582-09-2"));
+            assertTrue(testCase, this.rs.getString(4).startsWith("1582-10-0"));
+
+            /*
+             * Getting stored values back.
+             * 
+             * Default Julian to Gregorian calendar switch is: October 4, 1582 (Julian) is followed by October 15, 1582 (Gregorian).
+             * So when default non-proleptic calendar is used the given 1582-10-08 date is in a "missing" period. In this case GregorianCalendar
+             * uses a Julian calendar system for counting date in milliseconds, thus adding another 10 days to the date and returning 1582-10-18.
+             * 
+             * With explicit proleptic calendar we get the symmetric back conversion.
+             */
+            this.rs = this.stmt.executeQuery("select * from testBug72609");
+            this.rs.next();
+
+            assertEquals(testCase, "1582-09-28", this.rs.getDate(1).toString());
+
+            assertEquals(testCase, "1582-10-18", this.rs.getDate(2).toString()); // according to Julian calendar
+            assertEquals(testCase, "1582-09-28", this.rs.getDate(2, prolepticGc).toString()); // according to proleptic Gregorian calendar
+
+            assertTrue(this.rs.getTimestamp(3).toString().startsWith("1582-09-2"));
+
+            // the exact day depends on adjustments between time zones, but that's not interesting for this test
+            assertTrue(testCase, this.rs.getTimestamp(4).toString().startsWith("1582-10-1")); // according to Julian calendar
+            assertTrue(this.rs.getTimestamp(4, prolepticGc).toString().startsWith("1582-09-2")); // according to proleptic Gregorian calendar
+
+            c1.close();
+
+        } while ((sendFractionalSeconds = !sendFractionalSeconds) || (useServerPrepStmts = !useServerPrepStmts)
+                || (useLegacyDatetimeCode = !useLegacyDatetimeCode) || (useJDBCCompliantTimezoneShift = !useJDBCCompliantTimezoneShift)
+                || (useGmtMillisForDatetimes = !useGmtMillisForDatetimes) || (useSSPSCompatibleTimezoneShift = !useSSPSCompatibleTimezoneShift)
+                || (useFastDateParsing = !useFastDateParsing));
     }
 }
