@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2002, 2013, Oracle and/or its affiliates. All rights reserved.
+  Copyright (c) 2002, 2014, Oracle and/or its affiliates. All rights reserved.
 
   The MySQL Connector/J is licensed under the terms of the GPLv2
   <http://www.gnu.org/licenses/old-licenses/gpl-2.0.html>, like most MySQL Connectors.
@@ -18,8 +18,9 @@
   You should have received a copy of the GNU General Public License along with this
   program; if not, write to the Free Software Foundation, Inc., 51 Franklin St, Fifth
   Floor, Boston, MA 02110-1301  USA
- 
+
  */
+
 package com.mysql.jdbc;
 
 import java.io.IOException;
@@ -556,9 +557,9 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements
 
 	private long maximumNumberTablesAccessed = 0;
 
-	/** Has the max-rows setting been changed from the default? */
-	private boolean maxRowsChanged = false;
-
+	/** The max-rows setting for current session */
+	private int sessionMaxRows = -1;
+	
 	/** When was the last time we reported metrics? */
 	private long metricsLastReportedMs;
 
@@ -629,9 +630,6 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements
 	private Map<String, String> serverVariables = null;
 
 	private long shortestQueryTimeMs = Long.MAX_VALUE;
-
-	/** A map of statements that have had setMaxRows() called on them */
-	private Map<Statement, Statement> statementsUsingMaxRows;
 
 	private double totalQueryTimeMs = 0;
 
@@ -721,7 +719,7 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements
 	 * @exception SQLException
 	 *                if a database access error occurs
 	 */
-	protected ConnectionImpl(String hostToConnectTo, int portToConnectTo, Properties info,
+	public ConnectionImpl(String hostToConnectTo, int portToConnectTo, Properties info,
 			String databaseToConnectTo, String url)
 			throws SQLException {
 	
@@ -1259,6 +1257,9 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements
 			if (newPassword == null) {
 				newPassword = "";
 			}
+
+			// reset maxRows to default value
+			this.sessionMaxRows = -1;
 
 			try {
 				this.io.changeUser(userName, newPassword, this.database);
@@ -2496,6 +2497,9 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements
 
 		this.port = newPort;
 		this.host = newHost;
+
+		// reset max-rows to default value
+		this.sessionMaxRows = -1;
 		
 		this.io = new MysqlIO(newHost, newPort,
 				mergedProps, getSocketFactoryClassName(),
@@ -4029,9 +4033,8 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements
 			}
 			
 			if (directCompare) {
-				if (!nullSafeCompare(otherOrigDatabase, this.origDatabaseToConnectTo)) {			directCompare = false;
-					directCompare = false;
-				} else if (!nullSafeCompare(otherCurrentCatalog, this.database)) {
+				if (!nullSafeCompare(otherOrigDatabase, this.origDatabaseToConnectTo)
+						|| !nullSafeCompare(otherCurrentCatalog, this.database)) {
 					directCompare = false;
 				}
 			}
@@ -4284,24 +4287,6 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements
 	 */
 	public boolean lowerCaseTableNames() {
 		return this.lowerCaseTableNames;
-	}
-
-	/**
-	 * Has the maxRows value changed?
-	 * 
-	 * @param stmt
-	 *            DOCUMENT ME!
-	 */
-	public void maxRowsChanged(Statement stmt) {
-		synchronized (getConnectionMutex()) {
-			if (this.statementsUsingMaxRows == null) {
-				this.statementsUsingMaxRows = new HashMap<Statement, Statement>();
-			}
-	
-			this.statementsUsingMaxRows.put(stmt, stmt);
-	
-			this.maxRowsChanged = true;
-		}
 	}
 
 	/**
@@ -5740,8 +5725,7 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements
 			}
 		}
 	}
-	
-	
+
 	/**
 	 * Used by MiniAdmin to shutdown a MySQL server
 	 * 
@@ -5803,51 +5787,12 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements
 		}
 	}
 
-	/**
-	 * Called by statements on their .close() to let the connection know when it
-	 * is safe to set the connection back to 'default' row limits.
-	 * 
-	 * @param stmt
-	 *            the statement releasing it's max-rows requirement
-	 * @throws SQLException
-	 *             if a database error occurs issuing the statement that sets
-	 *             the limit default.
-	 */
-	public void unsetMaxRows(Statement stmt) throws SQLException {
-		synchronized (getConnectionMutex()) {
-			if (this.statementsUsingMaxRows != null) {
-				Object found = this.statementsUsingMaxRows.remove(stmt);
-	
-				if ((found != null)
-						&& (this.statementsUsingMaxRows.size() == 0)) {
-					execSQL(null, "SET SQL_SELECT_LIMIT=DEFAULT", -1,
-							null, DEFAULT_RESULT_SET_TYPE,
-							DEFAULT_RESULT_SET_CONCURRENCY, false, 
-							this.database, null, false);
-	
-					this.maxRowsChanged = false;
-				}
-			}
-		}
-	}
-	
 	public boolean useAnsiQuotedIdentifiers() {
 		synchronized (getConnectionMutex()) {
 			return this.useAnsiQuotes;
 		}
 	}
-	
-	/**
-	 * Has maxRows() been set?
-	 * 
-	 * @return DOCUMENT ME!
-	 */
-	public boolean useMaxRows() {
-		synchronized (getConnectionMutex()) {
-			return this.maxRowsChanged;
-		}
-	}
-	
+
 	public boolean versionMeetsMinimum(int major, int minor, int subminor)
 			throws SQLException {
 		checkClosed();
@@ -6029,7 +5974,34 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements
 			return false;
 		}
 	}
-	
+
+	/**
+	 * Returns the sql select limit max-rows for this session.
+	 */
+	public int getSessionMaxRows() {
+		synchronized (getConnectionMutex()) {
+			return this.sessionMaxRows;
+		}
+	}
+
+	/**
+	 * Sets the sql select limit max-rows for this session if different from current.
+	 * 
+	 * @param max
+	 *            the new max-rows value to set.
+	 * @throws SQLException
+	 *             if a database error occurs issuing the statement that sets the limit.
+	 */
+	public void setSessionMaxRows(int max) throws SQLException {
+		synchronized (getConnectionMutex()) {
+			if (this.sessionMaxRows != max) {
+				this.sessionMaxRows = max;
+				execSQL(null, "SET SQL_SELECT_LIMIT=" + (this.sessionMaxRows == -1 ? "DEFAULT" : this.sessionMaxRows), -1, null,
+						DEFAULT_RESULT_SET_TYPE, DEFAULT_RESULT_SET_CONCURRENCY, false, this.database, null, false);
+			}
+		}
+	}
+
 	// JDBC-4.1
 	// until we flip catalog/schema, this is a no-op
 	public void setSchema(String schema) throws SQLException {

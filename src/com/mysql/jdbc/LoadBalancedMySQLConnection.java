@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2007, 2013, Oracle and/or its affiliates. All rights reserved.
+  Copyright (c) 2007, 2014, Oracle and/or its affiliates. All rights reserved.
 
   The MySQL Connector/J is licensed under the terms of the GPLv2
   <http://www.gnu.org/licenses/old-licenses/gpl-2.0.html>, like most MySQL Connectors.
@@ -18,8 +18,9 @@
   You should have received a copy of the GNU General Public License along with this
   program; if not, write to the Free Software Foundation, Inc., 51 Franklin St, Fifth
   Floor, Boston, MA 02110-1301  USA
- 
+
  */
+
 package com.mysql.jdbc;
 
 import java.sql.CallableStatement;
@@ -2109,11 +2110,6 @@ public class LoadBalancedMySQLConnection implements LoadBalancedConnection {
 		return getActiveMySQLConnection().lowerCaseTableNames();
 	}
 
-	public void maxRowsChanged(com.mysql.jdbc.Statement stmt) {
-
-		getActiveMySQLConnection().maxRowsChanged(stmt);
-	}
-
 	public String nativeSQL(String sql) throws SQLException {
 
 		return getActiveMySQLConnection().nativeSQL(sql);
@@ -2412,16 +2408,8 @@ public class LoadBalancedMySQLConnection implements LoadBalancedConnection {
 		getActiveMySQLConnection().unSafeStatementInterceptors();
 	}
 
-	public void unsetMaxRows(com.mysql.jdbc.Statement stmt) throws SQLException {
-		getActiveMySQLConnection().unsetMaxRows(stmt);
-	}
-
 	public boolean useAnsiQuotedIdentifiers() {
 		return getActiveMySQLConnection().useAnsiQuotedIdentifiers();
-	}
-
-	public boolean useMaxRows() {
-		return getActiveMySQLConnection().useMaxRows();
 	}
 
 	public boolean versionMeetsMinimum(int major, int minor, int subminor)
@@ -2680,5 +2668,13 @@ public class LoadBalancedMySQLConnection implements LoadBalancedConnection {
 
 	public boolean getDetectCustomCollations() {
 		return getActiveMySQLConnection().getDetectCustomCollations();
+	}
+
+	public int getSessionMaxRows() {
+		return getActiveMySQLConnection().getSessionMaxRows();
+	}
+
+	public void setSessionMaxRows(int max) throws SQLException {
+		getActiveMySQLConnection().setSessionMaxRows(max);
 	}
 }

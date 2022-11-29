@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2002, 2013, Oracle and/or its affiliates. All rights reserved.
+  Copyright (c) 2002, 2014, Oracle and/or its affiliates. All rights reserved.
 
   The MySQL Connector/J is licensed under the terms of the GPLv2
   <http://www.gnu.org/licenses/old-licenses/gpl-2.0.html>, like most MySQL Connectors.
@@ -18,7 +18,9 @@
   You should have received a copy of the GNU General Public License along with this
   program; if not, write to the Free Software Foundation, Inc., 51 Franklin St, Fifth
   Floor, Boston, MA 02110-1301  USA
+
  */
+
 package com.mysql.jdbc;
 
 import java.io.InputStream;
@@ -229,9 +231,6 @@ public class StatementImpl implements Statement {
 	 * rows)
 	 */
 	protected int maxRows = -1;
-
-	/** Has someone changed this for this statement? */
-	protected boolean maxRowsChanged = false;
 
 	/** Set of currently-open ResultSets */
 	protected Set<ResultSetInternalMethods> openResults = new HashSet<ResultSetInternalMethods>();
@@ -575,24 +574,18 @@ public class StatementImpl implements Statement {
 	 *                if a database access error occurs
 	 */
 	public void close() throws SQLException {
-		try {
-			synchronized (checkClosed().getConnectionMutex()) {
-				realClose(true, true);
-			}
-		} catch (SQLException sqlEx) {
-			if (SQLError.SQL_STATE_CONNECTION_NOT_OPEN.equals(sqlEx.getSQLState())) {
-				return;
-			}
-			
-			throw sqlEx;
-		}
+		realClose(true, true);
 	}
 
 	/**
 	 * Close any open result sets that have been 'held open'
 	 */
 	protected void closeAllOpenResults() throws SQLException {
-		synchronized (checkClosed().getConnectionMutex()) {
+		MySQLConnection locallyScopedConn = this.connection;
+		
+		if (locallyScopedConn == null) return; // already closed
+		
+		synchronized (locallyScopedConn.getConnectionMutex()) {
 			if (this.openResults != null) {
 				for (ResultSetInternalMethods element : this.openResults) {
 					try {
@@ -867,13 +860,6 @@ public class StatementImpl implements Statement {
 	
 				ResultSetInternalMethods rs = null;
 	
-				// If there isn't a limit clause in the SQL
-				// then limit the number of rows to return in
-				// an efficient manner. Only do this if
-				// setMaxRows() hasn't been used on any Statements
-				// generated from the current Connection (saves
-				// a query, and network traffic).
-	
 				this.batchedGeneratedKeys = null;
 	
 				if (useServerFetch()) {
@@ -911,47 +897,17 @@ public class StatementImpl implements Statement {
 								cachedFields = cachedMetaData.fields;
 							}
 						}
-	
+
 						//
 						// Only apply max_rows to selects
 						//
-						if (locallyScopedConn.useMaxRows()) {
-							int rowLimit = -1;
-	
-							if (isSelect) {
-								if (StringUtils.indexOfIgnoreCase(sql, "LIMIT") != -1) { //$NON-NLS-1$
-									rowLimit = this.maxRows;
-								} else {
-									if (this.maxRows <= 0) {
-										executeSimpleNonQuery(locallyScopedConn,
-												"SET SQL_SELECT_LIMIT=DEFAULT");
-									} else {
-										executeSimpleNonQuery(locallyScopedConn,
-												"SET SQL_SELECT_LIMIT=" + this.maxRows);
-									}
-								}
-							} else {
-								executeSimpleNonQuery(locallyScopedConn,
-										"SET SQL_SELECT_LIMIT=DEFAULT");
-							}
-	
+						locallyScopedConn.setSessionMaxRows(isSelect ? this.maxRows : -1);
+						
+						statementBegins();
 
-							statementBegins();
+						rs = locallyScopedConn.execSQL(this, sql, this.maxRows, null, this.resultSetType,
+								this.resultSetConcurrency, doStreaming, this.currentCatalog, cachedFields);
 
-							// Finally, execute the query
-							rs = locallyScopedConn.execSQL(this, sql, rowLimit, null,
-									this.resultSetType, this.resultSetConcurrency,
-									doStreaming,
-									this.currentCatalog, cachedFields);
-						} else {
-							statementBegins();
-
-							rs = locallyScopedConn.execSQL(this, sql, -1, null,
-									this.resultSetType, this.resultSetConcurrency,
-									doStreaming,
-									this.currentCatalog, cachedFields);
-						}
-	
 						if (timeoutTask != null) {
 							if (timeoutTask.caughtWhileCancelling != null) {
 								throw timeoutTask.caughtWhileCancelling;
@@ -1568,13 +1524,6 @@ public class StatementImpl implements Statement {
 
 			CachedResultSetMetaData cachedMetaData = null;
 
-			// If there isn't a limit clause in the SQL
-			// then limit the number of rows to return in
-			// an efficient manner. Only do this if
-			// setMaxRows() hasn't been used on any Statements
-			// generated from the current Connection (saves
-			// a query, and network traffic).
-
 			if (useServerFetch()) {
 				this.results = createResultSetUsingServerFetch(sql);
 
@@ -1613,46 +1562,12 @@ public class StatementImpl implements Statement {
 					}
 				}
 
-				if (locallyScopedConn.useMaxRows()) {
-					// We need to execute this all together
-					// So synchronize on the Connection's mutex (because
-					// even queries going through there synchronize
-					// on the connection
-					if (StringUtils.indexOfIgnoreCase(sql, "LIMIT") != -1) { //$NON-NLS-1$
-						this.results = locallyScopedConn.execSQL(this, sql,
-								this.maxRows, null, this.resultSetType,
-								this.resultSetConcurrency,
-								doStreaming,
-								this.currentCatalog, cachedFields);
-					} else {
-						if (this.maxRows <= 0) {
-							executeSimpleNonQuery(locallyScopedConn,
-									"SET SQL_SELECT_LIMIT=DEFAULT");
-						} else {
-							executeSimpleNonQuery(locallyScopedConn,
-									"SET SQL_SELECT_LIMIT=" + this.maxRows);
-						}
+				locallyScopedConn.setSessionMaxRows(this.maxRows);
 
-						statementBegins();
-						
-						this.results = locallyScopedConn.execSQL(this, sql, -1,
-								null, this.resultSetType,
-								this.resultSetConcurrency,
-								doStreaming,
-								this.currentCatalog, cachedFields);
+				statementBegins();
 
-						if (oldCatalog != null) {
-							locallyScopedConn.setCatalog(oldCatalog);
-						}
-					}
-				} else {
-					statementBegins();
-					
-					this.results = locallyScopedConn.execSQL(this, sql, -1, null,
-							this.resultSetType, this.resultSetConcurrency,
-							doStreaming,
-							this.currentCatalog, cachedFields);
-				}
+				this.results = locallyScopedConn.execSQL(this, sql, this.maxRows, null,
+						this.resultSetType, this.resultSetConcurrency, doStreaming, this.currentCatalog, cachedFields);
 
 				if (timeoutTask != null) {
 					if (timeoutTask.caughtWhileCancelling != null) {
@@ -1832,19 +1747,14 @@ public class StatementImpl implements Statement {
 				//
 				// Only apply max_rows to selects
 				//
-				if (locallyScopedConn.useMaxRows()) {
-					executeSimpleNonQuery(locallyScopedConn,
-							"SET SQL_SELECT_LIMIT=DEFAULT");
-				}
+				locallyScopedConn.setSessionMaxRows(-1);
 
 				statementBegins();
-				
+
+				// null catalog: force read of field info on DML
 				rs = locallyScopedConn.execSQL(this, sql, -1, null,
-						java.sql.ResultSet.TYPE_FORWARD_ONLY,
-						java.sql.ResultSet.CONCUR_READ_ONLY, false,
-						this.currentCatalog,
-						null /* force read of field info on DML */,
-						isBatch);
+						java.sql.ResultSet.TYPE_FORWARD_ONLY, java.sql.ResultSet.CONCUR_READ_ONLY, false,
+						this.currentCatalog, null, isBatch);
 
 				if (timeoutTask != null) {
 					if (timeoutTask.caughtWhileCancelling != null) {
@@ -2580,15 +2490,16 @@ public class StatementImpl implements Statement {
 	 */
 	protected void realClose(boolean calledExplicitly, boolean closeOpenResults)
 			throws SQLException {
-		MySQLConnection locallyScopedConn;
+		MySQLConnection locallyScopedConn = this.connection;
 		
-		try {
-			locallyScopedConn = checkClosed();
-		} catch (SQLException sqlEx) {
-			return; // already closed
-		}
+		if (locallyScopedConn == null) return; // already closed
 		
 		synchronized (locallyScopedConn.getConnectionMutex()) {
+
+			// additional check in case Statement was closed
+			// while current thread was waiting for lock
+			if (this.isClosed) return;
+
 	
 			if (this.useUsageAdvisor) {
 				if (!calledExplicitly) {
@@ -2633,10 +2544,6 @@ public class StatementImpl implements Statement {
 			}
 	
 			if (this.connection != null) {
-				if (this.maxRowsChanged) {
-					this.connection.unsetMaxRows(this);
-				}
-	
 				if (!this.connection.getDontTrackOpenResources()) {
 					this.connection.unregisterStatement(this);
 				}
@@ -2737,7 +2644,7 @@ public class StatementImpl implements Statement {
 	public void setFetchSize(int rows) throws SQLException {
 		synchronized (checkClosed().getConnectionMutex()) {
 			if (((rows < 0) && (rows != Integer.MIN_VALUE))
-					|| ((this.maxRows != 0) && (this.maxRows != -1) && (rows > this
+					|| ((this.maxRows > 0) && (rows > this
 							.getMaxRows()))) {
 				throw SQLError.createSQLException(
 						Messages.getString("Statement.7"), //$NON-NLS-1$
@@ -2815,19 +2722,6 @@ public class StatementImpl implements Statement {
 			}
 	
 			this.maxRows = max;
-			this.maxRowsChanged = true;
-	
-			if (this.maxRows == -1) {
-				this.connection.unsetMaxRows(this);
-				this.maxRowsChanged = false;
-			} else {
-				// Most people don't use setMaxRows()
-				// so don't penalize them
-				// with the extra query it takes
-				// to do it efficiently unless we need
-				// to.
-				this.connection.maxRowsChanged(this);
-			}
 		}
 	}
 
@@ -2948,16 +2842,12 @@ public class StatementImpl implements Statement {
 	}
 
 	public boolean isClosed() throws SQLException {
-		try {
-			synchronized (checkClosed().getConnectionMutex()) {
-				return this.isClosed;
-			}
-		} catch (SQLException sqlEx) {
-			if (SQLError.SQL_STATE_CONNECTION_NOT_OPEN.equals(sqlEx.getSQLState())) {
-				return true;
-			}
-			
-			throw sqlEx;
+		MySQLConnection locallyScopedConn = this.connection;
+		if (locallyScopedConn == null) {
+			return true;
+		}
+		synchronized (locallyScopedConn.getConnectionMutex()) {
+			return this.isClosed;
 		}
 	}
 

@@ -1,6 +1,5 @@
 /*
- Copyright (c) 2002, 2012, Oracle and/or its affiliates. All rights reserved.
- 
+  Copyright (c) 2002, 2014, Oracle and/or its affiliates. All rights reserved.
 
   The MySQL Connector/J is licensed under the terms of the GPLv2
   <http://www.gnu.org/licenses/old-licenses/gpl-2.0.html>, like most MySQL Connectors.
@@ -20,9 +19,8 @@
   program; if not, write to the Free Software Foundation, Inc., 51 Franklin St, Fifth
   Floor, Boston, MA 02110-1301  USA
 
-
-
  */
+
 package com.mysql.jdbc;
 
 import java.sql.Date;
@@ -1297,17 +1295,21 @@ public class TimeUtil {
 		return buf.toString();
 	}
 
-	public static String formatNanos(int nanos, boolean serverSupportsFracSecs) {
-		if (!serverSupportsFracSecs || nanos == 0) {
-		    return "0";
+	public static String formatNanos(int nanos, boolean serverSupportsFracSecs, boolean usingMicros) {
+
+		// get only last 9 digits
+		if (nanos > 999999999) {
+			nanos %= 100000000;
 		}
-		
-		boolean usingMicros = true;
-		
+
 		if (usingMicros) {
 			nanos /= 1000;
 		}
-		
+
+		if (!serverSupportsFracSecs || nanos == 0) {
+		    return "0";
+		}
+
 		final int digitCount = usingMicros ? 6 : 9;
 		
 	    String nanosString = Integer.toString(nanos);

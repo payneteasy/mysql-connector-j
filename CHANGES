@@ -1,5 +1,34 @@
 # Changelog
 # $Id$
+03-28-14 - Version 5.1.30
+
+  - Fix for Bug#71679 (18236388), Avoid iterator creation when invoking statement interceptors in MysqlIO.
+    Thanks to Andrej Golovnin for his contribution.
+
+  - Fix for Bug#70944 (17831255), community and commercial builds should have the same line number tables
+
+  - Fix for Bug#71861 (18327245), Avoid manual array copy in MysqlIO and LoadBalancingConnectionProxy.
+    Thanks to Andrej Golovnin for his contribution.
+
+  - Fix for Bug#71623 (18228668), Field#getStringFromBytes() creates useless byte array when using JVM converter.
+    Thanks to Andrej Golovnin for his contribution.
+
+  - Fix for Bug#71621 (18228302), MysqlXAConnection#xidToString(Xid xid) produces too much garbage.
+    Thanks to Andrej Golovnin for his contribution.
+
+  - Fix for Bug#67318 (16722637), SQLException thrown on already closed ResultSet. Thanks to Thomas Manville and Andrej Golovnin for their contribution.
+
+  - Fix for Bug#71396 (18110320), setMaxRows (SQL_SELECT_LIMIT) from one query used in later queries (sometimes).
+    Additionally, SQL_SELECT_LIMIT is no longer sent unnecessarily between consecutive queries.
+
+  - Fix for Bug#71432 (18107621), Key store files not closed when making SSL connection
+
+  - Reserved words lists updated from latest official SQL:92 and SQL:2003 specifications.
+
+  - Fix for Bug#18091639, STRINGINDEXOUTOFBOUNDSEXCEPTION IN PREPAREDSTATEMENT.SETTIMESTAMP WITH 5.6.15
+
+  - Added Fabric support
+
 02-10-14 - Version 5.1.29
 
   - Fix for Bug#70701 (17647584), DatabaseMetaData.getSQLKeywords() doesn't match MySQL 5.6 reserved words.

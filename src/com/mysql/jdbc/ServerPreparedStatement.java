@@ -1,6 +1,5 @@
 /*
- Copyright (c) 2002, 2013, Oracle and/or its affiliates. All rights reserved.
- 
+  Copyright (c) 2002, 2014, Oracle and/or its affiliates. All rights reserved.
 
   The MySQL Connector/J is licensed under the terms of the GPLv2
   <http://www.gnu.org/licenses/old-licenses/gpl-2.0.html>, like most MySQL Connectors.
@@ -20,9 +19,8 @@
   program; if not, write to the Free Software Foundation, Inc., 51 Franklin St, Fifth
   Floor, Boston, MA 02110-1301  USA
 
-
-
  */
+
 package com.mysql.jdbc;
 
 import java.io.IOException;
@@ -388,29 +386,6 @@ public class ServerPreparedStatement extends PreparedStatement {
 		
 		this.useAutoSlowLog = this.connection.getAutoSlowLog();
 		this.useTrueBoolean = this.connection.versionMeetsMinimum(3, 21, 23);
-		int lim_id = StringUtils.indexOfIgnoreCase(sql, "LIMIT");
-		if (lim_id != -1) {
-			boolean hasPreviosIdChar = false;
-			boolean hasFollowingIdChar = false;
-			if (lim_id > 0 && (
-					sql.charAt(lim_id - 1) == '`' ||
-					StringUtils.isValidIdChar(sql.charAt(lim_id - 1))
-					)) {
-				hasPreviosIdChar = true;
-			}
-			if (lim_id + 5 < sql.length() && (
-					sql.charAt(lim_id + 5) == '`' ||
-					StringUtils.isValidIdChar(sql.charAt(lim_id + 5))
-					)) {
-				hasFollowingIdChar = true;
-			}
-			if (!hasPreviosIdChar && !hasFollowingIdChar) {
-				this.hasLimitClause = true;
-			}
-		} else {
-			this.hasLimitClause = false;
-		}
-		
 		
 		String statementComment = this.connection.getStatementComment();
 
@@ -590,25 +565,22 @@ public class ServerPreparedStatement extends PreparedStatement {
 	 * @see java.sql.Statement#close()
 	 */
 	public void close() throws SQLException {
-		try {
-			synchronized (checkClosed().getConnectionMutex()) {
-				if (this.isCached && !this.isClosed) {
-					clearParameters();
-					
-					this.isClosed = true;
-					
-					this.connection.recachePreparedStatement(this);
-					return;
-				}
+		MySQLConnection locallyScopedConn = this.connection;
+		
+		if (locallyScopedConn == null) return; // already closed
+
+		synchronized (locallyScopedConn.getConnectionMutex()) {
+
+			if (this.isCached && !this.isClosed) {
+				clearParameters();
 				
-				realClose(true, true);
-			}
-		} catch (SQLException sqlEx) {
-			if (SQLError.SQL_STATE_CONNECTION_NOT_OPEN.equals(sqlEx.getSQLState())) {
+				this.isClosed = true;
+				
+				this.connection.recachePreparedStatement(this);
 				return;
 			}
 			
-			throw sqlEx;
+			realClose(true, true);
 		}
 	}
 
@@ -1064,14 +1036,10 @@ public class ServerPreparedStatement extends PreparedStatement {
 	 */
 	protected void realClose(boolean calledExplicitly, 
 			boolean closeOpenResults) throws SQLException {
-		MySQLConnection locallyScopedConn;
-		
-		try {
-			locallyScopedConn = checkClosed();
-		} catch (SQLException sqlEx) {
-			return; // already closed
-		}
-		
+		MySQLConnection locallyScopedConn = this.connection;
+
+		if (locallyScopedConn == null) return; // already closed
+
 		synchronized (locallyScopedConn.getConnectionMutex()) {
 
 			if (this.connection != null) {
@@ -1179,10 +1147,6 @@ public class ServerPreparedStatement extends PreparedStatement {
 				}
 				
 				if (this.connection != null) {
-					if (this.maxRowsChanged) {
-						this.connection.unsetMaxRows(this);
-					}
-	
 					if (!this.connection.getDontTrackOpenResources()) {
 						this.connection.unregisterStatement(this);
 					}
