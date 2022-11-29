@@ -4,7 +4,7 @@
   The MySQL Connector/J is licensed under the terms of the GPLv2
   <http://www.gnu.org/licenses/old-licenses/gpl-2.0.html>, like most MySQL Connectors.
   There are special exceptions to the terms and conditions of the GPLv2 as it is applied to
-  this software, see the FLOSS License Exception
+  this software, see the FOSS License Exception
   <http://www.mysql.com/about/legal/licensing/foss-exception.html>.
 
   This program is free software; you can redistribute it and/or modify it under the terms
@@ -83,11 +83,10 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements j
     static {
         if (Util.isJdbc4()) {
             try {
-                JDBC_4_PSTMT_2_ARG_CTOR = Class.forName("com.mysql.jdbc.JDBC4PreparedStatement").getConstructor(
-                        new Class[] { MySQLConnection.class, String.class });
-                JDBC_4_PSTMT_3_ARG_CTOR = Class.forName("com.mysql.jdbc.JDBC4PreparedStatement").getConstructor(
-                        new Class[] { MySQLConnection.class, String.class, String.class });
-                JDBC_4_PSTMT_4_ARG_CTOR = Class.forName("com.mysql.jdbc.JDBC4PreparedStatement").getConstructor(
+                String jdbc4ClassName = Util.isJdbc42() ? "com.mysql.jdbc.JDBC42PreparedStatement" : "com.mysql.jdbc.JDBC4PreparedStatement";
+                JDBC_4_PSTMT_2_ARG_CTOR = Class.forName(jdbc4ClassName).getConstructor(new Class[] { MySQLConnection.class, String.class });
+                JDBC_4_PSTMT_3_ARG_CTOR = Class.forName(jdbc4ClassName).getConstructor(new Class[] { MySQLConnection.class, String.class, String.class });
+                JDBC_4_PSTMT_4_ARG_CTOR = Class.forName(jdbc4ClassName).getConstructor(
                         new Class[] { MySQLConnection.class, String.class, String.class, ParseInfo.class });
             } catch (SecurityException e) {
                 throw new RuntimeException(e);
@@ -1219,21 +1218,8 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements j
         }
     }
 
-    /**
-     * JDBC 2.0 Submit a batch of commands to the database for execution. This
-     * method is optional.
-     * 
-     * @return an array of update counts containing one element for each command
-     *         in the batch. The array is ordered according to the order in
-     *         which commands were inserted into the batch
-     * 
-     * @exception SQLException
-     *                if a database-access error occurs, or the driver does not
-     *                support batch statements
-     * @throws java.sql.BatchUpdateException
-     */
     @Override
-    public int[] executeBatch() throws SQLException {
+    protected long[] executeBatchInternal() throws SQLException {
         synchronized (checkClosed().getConnectionMutex()) {
 
             if (this.connection.isReadOnly()) {
@@ -1242,7 +1228,7 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements j
             }
 
             if (this.batchedArgs == null || this.batchedArgs.size() == 0) {
-                return new int[0];
+                return new long[0];
             }
 
             // we timeout the entire batch, not individual statements
@@ -1295,7 +1281,7 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements j
      * @throws SQLException
      */
 
-    protected int[] executePreparedBatchAsMultiStatement(int batchTimeout) throws SQLException {
+    protected long[] executePreparedBatchAsMultiStatement(int batchTimeout) throws SQLException {
         synchronized (checkClosed().getConnectionMutex()) {
             // This is kind of an abuse, but it gets the job done
             if (this.batchedValuesClause == null) {
@@ -1328,7 +1314,7 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements j
                 int numberToExecuteAsMultiValue = 0;
                 int batchCounter = 0;
                 int updateCountCounter = 0;
-                int[] updateCounts = new int[numBatchedArgs];
+                long[] updateCounts = new long[numBatchedArgs];
                 SQLException sqlEx = null;
 
                 try {
@@ -1337,9 +1323,11 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements j
                     }
 
                     if (this.retrieveGeneratedKeys) {
-                        batchedStatement = locallyScopedConn.prepareStatement(generateMultiStatementForBatch(numValuesPerBatch), RETURN_GENERATED_KEYS);
+                        batchedStatement = ((Wrapper) locallyScopedConn.prepareStatement(generateMultiStatementForBatch(numValuesPerBatch),
+                                RETURN_GENERATED_KEYS)).unwrap(java.sql.PreparedStatement.class);
                     } else {
-                        batchedStatement = locallyScopedConn.prepareStatement(generateMultiStatementForBatch(numValuesPerBatch));
+                        batchedStatement = ((Wrapper) locallyScopedConn.prepareStatement(generateMultiStatementForBatch(numValuesPerBatch)))
+                                .unwrap(java.sql.PreparedStatement.class);
                     }
 
                     if (locallyScopedConn.getEnableQueryTimeouts() && batchTimeout != 0 && locallyScopedConn.versionMeetsMinimum(5, 0, 0)) {
@@ -1433,10 +1421,7 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements j
                     }
 
                     if (sqlEx != null) {
-                        SQLException batchUpdateException = new java.sql.BatchUpdateException(sqlEx.getMessage(), sqlEx.getSQLState(), sqlEx.getErrorCode(),
-                                updateCounts);
-                        batchUpdateException.initCause(sqlEx);
-                        throw batchUpdateException;
+                        throw SQLError.createBatchUpdateException(sqlEx, updateCounts, getExceptionInterceptor());
                     }
 
                     return updateCounts;
@@ -1486,7 +1471,7 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements j
      * 
      * @throws SQLException
      */
-    protected int[] executeBatchedInserts(int batchTimeout) throws SQLException {
+    protected long[] executeBatchedInserts(int batchTimeout) throws SQLException {
         synchronized (checkClosed().getConnectionMutex()) {
             String valuesClause = getValuesClause();
 
@@ -1508,16 +1493,16 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements j
                 numValuesPerBatch = numBatchedArgs;
             }
 
-            java.sql.PreparedStatement batchedStatement = null;
+            PreparedStatement batchedStatement = null;
 
             int batchedParamIndex = 1;
-            int updateCountRunningTotal = 0;
+            long updateCountRunningTotal = 0;
             int numberToExecuteAsMultiValue = 0;
             int batchCounter = 0;
             CancelTask timeoutTask = null;
             SQLException sqlEx = null;
 
-            int[] updateCounts = new int[numBatchedArgs];
+            long[] updateCounts = new long[numBatchedArgs];
 
             try {
                 try {
@@ -1525,7 +1510,7 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements j
                     prepareBatchedInsertSQL(locallyScopedConn, numValuesPerBatch);
 
                     if (locallyScopedConn.getEnableQueryTimeouts() && batchTimeout != 0 && locallyScopedConn.versionMeetsMinimum(5, 0, 0)) {
-                        timeoutTask = new CancelTask((StatementImpl) batchedStatement);
+                        timeoutTask = new CancelTask(batchedStatement);
                         locallyScopedConn.getCancelTimer().schedule(timeoutTask, batchTimeout);
                     }
 
@@ -1540,7 +1525,7 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements j
                     for (int i = 0; i < numberArgsToExecute; i++) {
                         if (i != 0 && i % numValuesPerBatch == 0) {
                             try {
-                                updateCountRunningTotal += batchedStatement.executeUpdate();
+                                updateCountRunningTotal += batchedStatement.executeLargeUpdate();
                             } catch (SQLException ex) {
                                 sqlEx = handleExceptionForBatch(batchCounter - 1, numValuesPerBatch, updateCounts, ex);
                             }
@@ -1555,7 +1540,7 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements j
                     }
 
                     try {
-                        updateCountRunningTotal += batchedStatement.executeUpdate();
+                        updateCountRunningTotal += batchedStatement.executeLargeUpdate();
                     } catch (SQLException ex) {
                         sqlEx = handleExceptionForBatch(batchCounter - 1, numValuesPerBatch, updateCounts, ex);
                     }
@@ -1575,7 +1560,7 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements j
                         batchedStatement = prepareBatchedInsertSQL(locallyScopedConn, numValuesPerBatch);
 
                         if (timeoutTask != null) {
-                            timeoutTask.toCancel = (StatementImpl) batchedStatement;
+                            timeoutTask.toCancel = batchedStatement;
                         }
 
                         batchedParamIndex = 1;
@@ -1585,7 +1570,7 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements j
                         }
 
                         try {
-                            updateCountRunningTotal += batchedStatement.executeUpdate();
+                            updateCountRunningTotal += batchedStatement.executeLargeUpdate();
                         } catch (SQLException ex) {
                             sqlEx = handleExceptionForBatch(batchCounter - 1, numValuesPerBatch, updateCounts, ex);
                         }
@@ -1594,14 +1579,11 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements j
                     }
 
                     if (sqlEx != null) {
-                        SQLException batchUpdateException = new java.sql.BatchUpdateException(sqlEx.getMessage(), sqlEx.getSQLState(), sqlEx.getErrorCode(),
-                                updateCounts);
-                        batchUpdateException.initCause(sqlEx);
-                        throw batchUpdateException;
+                        throw SQLError.createBatchUpdateException(sqlEx, updateCounts, getExceptionInterceptor());
                     }
 
                     if (numBatchedArgs > 1) {
-                        int updCount = updateCountRunningTotal > 0 ? java.sql.Statement.SUCCESS_NO_INFO : 0;
+                        long updCount = updateCountRunningTotal > 0 ? java.sql.Statement.SUCCESS_NO_INFO : 0;
                         for (int j = 0; j < numBatchedArgs; j++) {
                             updateCounts[j] = updCount;
                         }
@@ -1722,7 +1704,7 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements j
      * @throws SQLException
      *             if an error occurs
      */
-    protected int[] executeBatchSerially(int batchTimeout) throws SQLException {
+    protected long[] executeBatchSerially(int batchTimeout) throws SQLException {
 
         synchronized (checkClosed().getConnectionMutex()) {
             MySQLConnection locallyScopedConn = this.connection;
@@ -1731,11 +1713,11 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements j
                 checkClosed();
             }
 
-            int[] updateCounts = null;
+            long[] updateCounts = null;
 
             if (this.batchedArgs != null) {
                 int nbrCommands = this.batchedArgs.size();
-                updateCounts = new int[nbrCommands];
+                updateCounts = new long[nbrCommands];
 
                 for (int i = 0; i < nbrCommands; i++) {
                     updateCounts[i] = -3;
@@ -1758,58 +1740,37 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements j
                     for (this.batchCommandIndex = 0; this.batchCommandIndex < nbrCommands; this.batchCommandIndex++) {
                         Object arg = this.batchedArgs.get(this.batchCommandIndex);
 
-                        if (arg instanceof String) {
-                            updateCounts[this.batchCommandIndex] = executeUpdate((String) arg);
-                        } else {
-                            BatchParams paramArg = (BatchParams) arg;
+                        try {
+                            if (arg instanceof String) {
+                                updateCounts[this.batchCommandIndex] = executeUpdateInternal((String) arg, true, this.retrieveGeneratedKeys);
 
-                            try {
-                                updateCounts[this.batchCommandIndex] = executeUpdate(paramArg.parameterStrings, paramArg.parameterStreams, paramArg.isStream,
-                                        paramArg.streamLengths, paramArg.isNull, true);
+                                // limit one generated key per OnDuplicateKey statement
+                                getBatchedGeneratedKeys(this.results.getFirstCharOfQuery() == 'I' && containsOnDuplicateKeyInString((String) arg) ? 1 : 0);
+                            } else {
+                                BatchParams paramArg = (BatchParams) arg;
+                                updateCounts[this.batchCommandIndex] = executeUpdateInternal(paramArg.parameterStrings, paramArg.parameterStreams,
+                                        paramArg.isStream, paramArg.streamLengths, paramArg.isNull, true);
 
-                                if (this.retrieveGeneratedKeys) {
-                                    java.sql.ResultSet rs = null;
+                                // limit one generated key per OnDuplicateKey statement
+                                getBatchedGeneratedKeys(containsOnDuplicateKeyUpdateInSQL() ? 1 : 0);
+                            }
+                        } catch (SQLException ex) {
+                            updateCounts[this.batchCommandIndex] = EXECUTE_FAILED;
 
-                                    try {
-                                        if (containsOnDuplicateKeyUpdateInSQL()) {
-                                            rs = getGeneratedKeysInternal(1);
-                                        } else {
-                                            rs = getGeneratedKeysInternal();
-                                        }
+                            if (this.continueBatchOnError && !(ex instanceof MySQLTimeoutException) && !(ex instanceof MySQLStatementCancelledException)
+                                    && !hasDeadlockOrTimeoutRolledBackTx(ex)) {
+                                sqlEx = ex;
+                            } else {
+                                long[] newUpdateCounts = new long[this.batchCommandIndex];
+                                System.arraycopy(updateCounts, 0, newUpdateCounts, 0, this.batchCommandIndex);
 
-                                        while (rs.next()) {
-                                            this.batchedGeneratedKeys.add(new ByteArrayRow(new byte[][] { rs.getBytes(1) }, getExceptionInterceptor()));
-                                        }
-                                    } finally {
-                                        if (rs != null) {
-                                            rs.close();
-                                        }
-                                    }
-                                }
-                            } catch (SQLException ex) {
-                                updateCounts[this.batchCommandIndex] = EXECUTE_FAILED;
-
-                                if (this.continueBatchOnError && !(ex instanceof MySQLTimeoutException) && !(ex instanceof MySQLStatementCancelledException)
-                                        && !hasDeadlockOrTimeoutRolledBackTx(ex)) {
-                                    sqlEx = ex;
-                                } else {
-                                    int[] newUpdateCounts = new int[this.batchCommandIndex];
-                                    System.arraycopy(updateCounts, 0, newUpdateCounts, 0, this.batchCommandIndex);
-
-                                    SQLException batchUpdateException = new java.sql.BatchUpdateException(ex.getMessage(), ex.getSQLState(), ex.getErrorCode(),
-                                            newUpdateCounts);
-                                    batchUpdateException.initCause(ex);
-                                    throw batchUpdateException;
-                                }
+                                throw SQLError.createBatchUpdateException(ex, newUpdateCounts, getExceptionInterceptor());
                             }
                         }
                     }
 
                     if (sqlEx != null) {
-                        SQLException batchUpdateException = new java.sql.BatchUpdateException(sqlEx.getMessage(), sqlEx.getSQLState(), sqlEx.getErrorCode(),
-                                updateCounts);
-                        batchUpdateException.initCause(sqlEx);
-                        throw batchUpdateException;
+                        throw SQLError.createBatchUpdateException(sqlEx, updateCounts, getExceptionInterceptor());
                     }
                 } catch (NullPointerException npe) {
                     try {
@@ -1817,12 +1778,11 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements j
                     } catch (SQLException connectionClosedEx) {
                         updateCounts[this.batchCommandIndex] = EXECUTE_FAILED;
 
-                        int[] newUpdateCounts = new int[this.batchCommandIndex];
+                        long[] newUpdateCounts = new long[this.batchCommandIndex];
 
                         System.arraycopy(updateCounts, 0, newUpdateCounts, 0, this.batchCommandIndex);
 
-                        throw new java.sql.BatchUpdateException(connectionClosedEx.getMessage(), connectionClosedEx.getSQLState(),
-                                connectionClosedEx.getErrorCode(), newUpdateCounts);
+                        throw SQLError.createBatchUpdateException(connectionClosedEx, newUpdateCounts, getExceptionInterceptor());
                     }
 
                     throw npe; // we don't know why this happened, punt
@@ -1838,7 +1798,7 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements j
                 }
             }
 
-            return (updateCounts != null) ? updateCounts : new int[0];
+            return (updateCounts != null) ? updateCounts : new long[0];
         }
 
     }
@@ -2031,7 +1991,7 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements j
      *                if a database access error occurs
      */
     public int executeUpdate() throws SQLException {
-        return executeUpdate(true, false);
+        return Util.truncateAndConvertToInt(executeLargeUpdate());
     }
 
     /*
@@ -2039,14 +1999,14 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements j
      * batched updates, which will end up clobbering the warnings and generated
      * keys we need to gather for the batch.
      */
-    protected int executeUpdate(boolean clearBatchedGeneratedKeysAndWarnings, boolean isBatch) throws SQLException {
+    protected long executeUpdateInternal(boolean clearBatchedGeneratedKeysAndWarnings, boolean isBatch) throws SQLException {
         synchronized (checkClosed().getConnectionMutex()) {
             if (clearBatchedGeneratedKeysAndWarnings) {
                 clearWarnings();
                 this.batchedGeneratedKeys = null;
             }
 
-            return executeUpdate(this.parameterValues, this.parameterStreams, this.isStream, this.streamLengths, this.isNull, isBatch);
+            return executeUpdateInternal(this.parameterValues, this.parameterStreams, this.isStream, this.streamLengths, this.isNull, isBatch);
         }
     }
 
@@ -2069,14 +2029,14 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements j
      * @throws SQLException
      *             if a database error occurs
      */
-    protected int executeUpdate(byte[][] batchedParameterStrings, InputStream[] batchedParameterStreams, boolean[] batchedIsStream, int[] batchedStreamLengths,
-            boolean[] batchedIsNull, boolean isReallyBatch) throws SQLException {
+    protected long executeUpdateInternal(byte[][] batchedParameterStrings, InputStream[] batchedParameterStreams, boolean[] batchedIsStream,
+            int[] batchedStreamLengths, boolean[] batchedIsNull, boolean isReallyBatch) throws SQLException {
 
         synchronized (checkClosed().getConnectionMutex()) {
 
             MySQLConnection locallyScopedConn = this.connection;
 
-            if (locallyScopedConn.isReadOnly()) {
+            if (locallyScopedConn.isReadOnly(false)) {
                 throw SQLError.createSQLException(Messages.getString("PreparedStatement.34") + Messages.getString("PreparedStatement.35"),
                         SQLError.SQL_STATE_ILLEGAL_ARGUMENT, getExceptionInterceptor());
             }
@@ -2131,17 +2091,9 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements j
                 }
             }
 
-            int truncatedUpdateCount = 0;
-
-            if (this.updateCount > Integer.MAX_VALUE) {
-                truncatedUpdateCount = Integer.MAX_VALUE;
-            } else {
-                truncatedUpdateCount = (int) this.updateCount;
-            }
-
             this.lastInsertId = rs.getUpdateID();
 
-            return truncatedUpdateCount;
+            return this.updateCount;
         }
     }
 
@@ -2779,7 +2731,7 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements j
      * @throws NotImplemented
      */
     public void setArray(int i, Array x) throws SQLException {
-        throw SQLError.notImplemented();
+        throw SQLError.createSQLFeatureNotSupportedException();
     }
 
     /**
@@ -3654,25 +3606,11 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements j
                 setNull(parameterIndex, java.sql.Types.OTHER);
             } else {
                 try {
+                    /*
+                     * From Table-B5 in the JDBC Spec
+                     */
                     switch (targetSqlType) {
                         case Types.BOOLEAN:
-                            /*
-                             * From Table-B5 in the JDBC-3.0 Spec
-                             * 
-                             * T S I B R F D D N B B C V L
-                             * I M N I E L O E U I O H A O
-                             * N A T G A O U C M T O A R N
-                             * Y L E I L A B I E L R C G
-                             * I L G N T L M R E H V
-                             * N I E T E A I A A A
-                             * T N R L C N R R
-                             * T C
-                             * H
-                             * A
-                             * R
-                             * -----------------------------------
-                             * Boolean x x x x x x x x x x x x x x
-                             */
 
                             if (parameterObj instanceof Boolean) {
                                 setBoolean(parameterIndex, ((Boolean) parameterObj).booleanValue());
@@ -3857,7 +3795,7 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements j
      * @throws NotImplemented
      */
     public void setRef(int i, Ref x) throws SQLException {
-        throw SQLError.notImplemented();
+        throw SQLError.createSQLFeatureNotSupportedException();
     }
 
     /**
@@ -4261,6 +4199,10 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements j
         } else {
             checkClosed();
 
+            if (!this.sendFractionalSeconds) {
+                x = TimeUtil.truncateFractionalSeconds(x);
+            }
+
             if (!this.useLegacyDatetimeCode) {
                 newSetTimestampInternal(parameterIndex, x, targetCalendar);
             } else {
@@ -4566,6 +4508,7 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements j
 
     private final byte[] streamToBytes(InputStream in, boolean escape, int streamLength, boolean useLength) throws SQLException {
         synchronized (checkClosed().getConnectionMutex()) {
+            in.mark(Integer.MAX_VALUE); // we may need to read this same stream several times, so we need to reset it at the end.
             try {
                 if (this.streamConvertBuf == null) {
                     this.streamConvertBuf = new byte[4096];
@@ -4624,6 +4567,10 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements j
 
                 return bytesOut.toByteArray();
             } finally {
+                try {
+                    in.reset();
+                } catch (IOException e) {
+                }
                 if (this.connection.getAutoClosePStmtStreams()) {
                     try {
                         in.close();
@@ -5119,19 +5066,31 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements j
     }
 
     protected static boolean canRewrite(String sql, boolean isOnDuplicateKeyUpdate, int locationOfOnDuplicateKeyUpdate, int statementStartPos) {
-        // Needs to be INSERT, can't have INSERT ... SELECT or INSERT ... ON DUPLICATE KEY UPDATE with an id=LAST_INSERT_ID(...)
+        // Needs to be INSERT or REPLACE.
+        // Can't have INSERT ... SELECT or INSERT ... ON DUPLICATE KEY UPDATE with an id=LAST_INSERT_ID(...).
 
-        boolean rewritableOdku = true;
-
-        if (isOnDuplicateKeyUpdate) {
-            int updateClausePos = StringUtils.indexOfIgnoreCase(locationOfOnDuplicateKeyUpdate, sql, " UPDATE ");
-
-            if (updateClausePos != -1) {
-                rewritableOdku = StringUtils.indexOfIgnoreCase(updateClausePos, sql, "LAST_INSERT_ID", "\"'`", "\"'`", StringUtils.SEARCH_MODE__MRK_COM_WS) == -1;
+        if (StringUtils.startsWithIgnoreCaseAndWs(sql, "INSERT", statementStartPos)) {
+            if (StringUtils.indexOfIgnoreCase(statementStartPos, sql, "SELECT", "\"'`", "\"'`", StringUtils.SEARCH_MODE__MRK_COM_WS) != -1) {
+                return false;
             }
+            if (isOnDuplicateKeyUpdate) {
+                int updateClausePos = StringUtils.indexOfIgnoreCase(locationOfOnDuplicateKeyUpdate, sql, " UPDATE ");
+                if (updateClausePos != -1) {
+                    return StringUtils.indexOfIgnoreCase(updateClausePos, sql, "LAST_INSERT_ID", "\"'`", "\"'`", StringUtils.SEARCH_MODE__MRK_COM_WS) == -1;
+                }
+            }
+            return true;
         }
 
-        return StringUtils.startsWithIgnoreCaseAndWs(sql, "INSERT", statementStartPos)
-                && StringUtils.indexOfIgnoreCase(statementStartPos, sql, "SELECT", "\"'`", "\"'`", StringUtils.SEARCH_MODE__MRK_COM_WS) == -1 && rewritableOdku;
+        return StringUtils.startsWithIgnoreCaseAndWs(sql, "REPLACE", statementStartPos)
+                && StringUtils.indexOfIgnoreCase(statementStartPos, sql, "SELECT", "\"'`", "\"'`", StringUtils.SEARCH_MODE__MRK_COM_WS) == -1;
+    }
+
+    /**
+     * JDBC 4.2
+     * Same as PreparedStatement.executeUpdate() but returns long instead of int.
+     */
+    public long executeLargeUpdate() throws SQLException {
+        return executeUpdateInternal(true, false);
     }
 }

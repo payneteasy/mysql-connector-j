@@ -4,7 +4,7 @@
   The MySQL Connector/J is licensed under the terms of the GPLv2
   <http://www.gnu.org/licenses/old-licenses/gpl-2.0.html>, like most MySQL Connectors.
   There are special exceptions to the terms and conditions of the GPLv2 as it is applied to
-  this software, see the FLOSS License Exception
+  this software, see the FOSS License Exception
   <http://www.mysql.com/about/legal/licensing/foss-exception.html>.
 
   This program is free software; you can redistribute it and/or modify it under the terms
@@ -99,17 +99,20 @@ import com.mysql.jdbc.profiler.ProfilerEventHandler;
 public class ResultSetImpl implements ResultSetInternalMethods {
 
     private static final Constructor<?> JDBC_4_RS_4_ARG_CTOR;
-    private static final Constructor<?> JDBC_4_RS_6_ARG_CTOR;;
-    private static final Constructor<?> JDBC_4_UPD_RS_6_ARG_CTOR;
+    private static final Constructor<?> JDBC_4_RS_5_ARG_CTOR;;
+    private static final Constructor<?> JDBC_4_UPD_RS_5_ARG_CTOR;
 
     static {
         if (Util.isJdbc4()) {
             try {
-                JDBC_4_RS_4_ARG_CTOR = Class.forName("com.mysql.jdbc.JDBC4ResultSet").getConstructor(
+                String jdbc4ClassName = Util.isJdbc42() ? "com.mysql.jdbc.JDBC42ResultSet" : "com.mysql.jdbc.JDBC4ResultSet";
+                JDBC_4_RS_4_ARG_CTOR = Class.forName(jdbc4ClassName).getConstructor(
                         new Class[] { Long.TYPE, Long.TYPE, MySQLConnection.class, com.mysql.jdbc.StatementImpl.class });
-                JDBC_4_RS_6_ARG_CTOR = Class.forName("com.mysql.jdbc.JDBC4ResultSet").getConstructor(
+                JDBC_4_RS_5_ARG_CTOR = Class.forName(jdbc4ClassName).getConstructor(
                         new Class[] { String.class, Field[].class, RowData.class, MySQLConnection.class, com.mysql.jdbc.StatementImpl.class });
-                JDBC_4_UPD_RS_6_ARG_CTOR = Class.forName("com.mysql.jdbc.JDBC4UpdatableResultSet").getConstructor(
+
+                jdbc4ClassName = Util.isJdbc42() ? "com.mysql.jdbc.JDBC42UpdatableResultSet" : "com.mysql.jdbc.JDBC4UpdatableResultSet";
+                JDBC_4_UPD_RS_5_ARG_CTOR = Class.forName(jdbc4ClassName).getConstructor(
                         new Class[] { String.class, Field[].class, RowData.class, MySQLConnection.class, com.mysql.jdbc.StatementImpl.class });
             } catch (SecurityException e) {
                 throw new RuntimeException(e);
@@ -120,8 +123,8 @@ public class ResultSetImpl implements ResultSetInternalMethods {
             }
         } else {
             JDBC_4_RS_4_ARG_CTOR = null;
-            JDBC_4_RS_6_ARG_CTOR = null;
-            JDBC_4_UPD_RS_6_ARG_CTOR = null;
+            JDBC_4_RS_5_ARG_CTOR = null;
+            JDBC_4_UPD_RS_5_ARG_CTOR = null;
         }
     }
 
@@ -336,11 +339,11 @@ public class ResultSetImpl implements ResultSetInternalMethods {
         }
 
         if (!isUpdatable) {
-            return (ResultSetImpl) Util.handleNewInstance(JDBC_4_RS_6_ARG_CTOR, new Object[] { catalog, fields, tuples, conn, creatorStmt },
+            return (ResultSetImpl) Util.handleNewInstance(JDBC_4_RS_5_ARG_CTOR, new Object[] { catalog, fields, tuples, conn, creatorStmt },
                     conn.getExceptionInterceptor());
         }
 
-        return (ResultSetImpl) Util.handleNewInstance(JDBC_4_UPD_RS_6_ARG_CTOR, new Object[] { catalog, fields, tuples, conn, creatorStmt },
+        return (ResultSetImpl) Util.handleNewInstance(JDBC_4_UPD_RS_5_ARG_CTOR, new Object[] { catalog, fields, tuples, conn, creatorStmt },
                 conn.getExceptionInterceptor());
     }
 
@@ -1130,7 +1133,7 @@ public class ResultSetImpl implements ResultSetInternalMethods {
     public java.sql.Array getArray(int i) throws SQLException {
         checkColumnBounds(i);
 
-        throw SQLError.notImplemented();
+        throw SQLError.createSQLFeatureNotSupportedException();
     }
 
     /**
@@ -2814,7 +2817,7 @@ public class ResultSetImpl implements ResultSetInternalMethods {
      * @throws NotImplemented
      */
     protected java.sql.Array getNativeArray(int i) throws SQLException {
-        throw SQLError.notImplemented();
+        throw SQLError.createSQLFeatureNotSupportedException();
     }
 
     /**
@@ -4067,7 +4070,7 @@ public class ResultSetImpl implements ResultSetInternalMethods {
      * @throws NotImplemented
      */
     protected java.sql.Ref getNativeRef(int i) throws SQLException {
-        throw SQLError.notImplemented();
+        throw SQLError.createSQLFeatureNotSupportedException();
     }
 
     /**
@@ -4635,19 +4638,10 @@ public class ResultSetImpl implements ResultSetInternalMethods {
             return (T) getRef(columnIndex);
         } else if (type.equals(URL.class)) {
             return (T) getURL(columnIndex);
-            //		} else if (type.equals(Struct.class)) {
-            //				
-            //			} 
-            //		} else if (type.equals(RowId.class)) {
-            //			
-            //		} else if (type.equals(NClob.class)) {
-            //			
-            //		} else if (type.equals(SQLXML.class)) {
-
         } else {
             if (this.connection.getAutoDeserialize()) {
                 try {
-                    return (T) getObject(columnIndex);
+                    return type.cast(getObject(columnIndex));
                 } catch (ClassCastException cce) {
                     SQLException sqlEx = SQLError.createSQLException("Conversion not supported for type " + type.getName(),
                             SQLError.SQL_STATE_ILLEGAL_ARGUMENT, getExceptionInterceptor());
@@ -4868,7 +4862,7 @@ public class ResultSetImpl implements ResultSetInternalMethods {
      */
     public java.sql.Ref getRef(int i) throws SQLException {
         checkColumnBounds(i);
-        throw SQLError.notImplemented();
+        throw SQLError.createSQLFeatureNotSupportedException();
     }
 
     /**
@@ -6855,7 +6849,7 @@ public class ResultSetImpl implements ResultSetInternalMethods {
      * @see DatabaseMetaData#deletesAreDetected
      */
     public boolean rowDeleted() throws SQLException {
-        throw SQLError.notImplemented();
+        throw SQLError.createSQLFeatureNotSupportedException();
     }
 
     /**
@@ -6872,7 +6866,7 @@ public class ResultSetImpl implements ResultSetInternalMethods {
      * @see DatabaseMetaData#insertsAreDetected
      */
     public boolean rowInserted() throws SQLException {
-        throw SQLError.notImplemented();
+        throw SQLError.createSQLFeatureNotSupportedException();
     }
 
     /**
@@ -6889,7 +6883,7 @@ public class ResultSetImpl implements ResultSetInternalMethods {
      * @see DatabaseMetaData#updatesAreDetected
      */
     public boolean rowUpdated() throws SQLException {
-        throw SQLError.notImplemented();
+        throw SQLError.createSQLFeatureNotSupportedException();
     }
 
     /**
@@ -7111,14 +7105,14 @@ public class ResultSetImpl implements ResultSetInternalMethods {
      * @see ResultSetInternalMethods#updateArray(int, Array)
      */
     public void updateArray(int arg0, Array arg1) throws SQLException {
-        throw SQLError.notImplemented();
+        throw SQLError.createSQLFeatureNotSupportedException();
     }
 
     /**
      * @see ResultSetInternalMethods#updateArray(String, Array)
      */
     public void updateArray(String arg0, Array arg1) throws SQLException {
-        throw SQLError.notImplemented();
+        throw SQLError.createSQLFeatureNotSupportedException();
     }
 
     /**
@@ -7416,7 +7410,7 @@ public class ResultSetImpl implements ResultSetInternalMethods {
      * @see ResultSetInternalMethods#updateClob(int, Clob)
      */
     public void updateClob(int arg0, java.sql.Clob arg1) throws SQLException {
-        throw SQLError.notImplemented();
+        throw SQLError.createSQLFeatureNotSupportedException();
     }
 
     /**
@@ -7730,14 +7724,14 @@ public class ResultSetImpl implements ResultSetInternalMethods {
      * @see ResultSetInternalMethods#updateRef(int, Ref)
      */
     public void updateRef(int arg0, Ref arg1) throws SQLException {
-        throw SQLError.notImplemented();
+        throw SQLError.createSQLFeatureNotSupportedException();
     }
 
     /**
      * @see ResultSetInternalMethods#updateRef(String, Ref)
      */
     public void updateRef(String arg0, Ref arg1) throws SQLException {
-        throw SQLError.notImplemented();
+        throw SQLError.createSQLFeatureNotSupportedException();
     }
 
     /**

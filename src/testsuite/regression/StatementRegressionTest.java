@@ -4,7 +4,7 @@
   The MySQL Connector/J is licensed under the terms of the GPLv2
   <http://www.gnu.org/licenses/old-licenses/gpl-2.0.html>, like most MySQL Connectors.
   There are special exceptions to the terms and conditions of the GPLv2 as it is applied to
-  this software, see the FLOSS License Exception
+  this software, see the FOSS License Exception
   <http://www.mysql.com/about/legal/licensing/foss-exception.html>.
 
   This program is free software; you can redistribute it and/or modify it under the terms
@@ -77,6 +77,7 @@ import com.mysql.jdbc.Field;
 import com.mysql.jdbc.MySQLConnection;
 import com.mysql.jdbc.NonRegisteringDriver;
 import com.mysql.jdbc.ParameterBindings;
+import com.mysql.jdbc.ReplicationConnection;
 import com.mysql.jdbc.ResultSetInternalMethods;
 import com.mysql.jdbc.SQLError;
 import com.mysql.jdbc.ServerPreparedStatement;
@@ -600,10 +601,6 @@ public class StatementRegressionTest extends BaseTestCase {
      *             if the test fails.
      */
     public void testBug11798() throws Exception {
-        if (isRunningOnJdk131()) {
-            return; // test not valid on JDK-1.3.1
-        }
-
         try {
             this.pstmt = this.conn.prepareStatement("SELECT ?");
             this.pstmt.setObject(1, Boolean.TRUE, Types.BOOLEAN);
@@ -995,10 +992,6 @@ public class StatementRegressionTest extends BaseTestCase {
      *             if the test fails
      */
     public void testBug1934() throws Exception {
-        if (isRunningOnJdk131()) {
-            return; // test not valid on JDK-1.3.1
-        }
-
         try {
             this.stmt.executeUpdate("DROP TABLE IF EXISTS testBug1934");
             this.stmt.executeUpdate("CREATE TABLE testBug1934 (field1 INT)");
@@ -1208,115 +1201,93 @@ public class StatementRegressionTest extends BaseTestCase {
             return;
         }
 
-        if (isRunningOnJdk131()) {
-            // bug with timezones, no update for new DST in USA
-            return;
-        }
+        final long epsillon = 3000; // allow 3 seconds time difference
 
-        // FIXME: This test is sensitive to being in CST/CDT it seems
-        if (!TimeZone.getDefault().equals(TimeZone.getTimeZone("America/Chicago"))) {
-            return;
-        }
-
-        long epsillon = 3000; // 3 seconds time difference
-
+        TimeZone defaultTimeZone = TimeZone.getDefault();
         try {
-            this.stmt.executeUpdate("DROP TABLE IF EXISTS testBug3620");
-            this.stmt.executeUpdate("CREATE TABLE testBug3620 (field1 TIMESTAMP)");
+            TimeZone.setDefault(TimeZone.getTimeZone("America/Chicago"));
 
-            PreparedStatement tsPstmt = this.conn.prepareStatement("INSERT INTO testBug3620 VALUES (?)");
+            createTable("testBug3620", "(field1 TIMESTAMP)");
+
+            Properties props = new Properties();
+            props.put("cacheDefaultTimezone", "false");
+
+            Connection connNoTz = getConnectionWithProps(props);
+            PreparedStatement tsPstmt = connNoTz.prepareStatement("INSERT INTO testBug3620 VALUES (?)");
 
             Calendar pointInTime = Calendar.getInstance();
             pointInTime.set(2004, 02, 29, 10, 0, 0);
-
             long pointInTimeOffset = pointInTime.getTimeZone().getRawOffset();
-
-            java.sql.Timestamp ts = new java.sql.Timestamp(pointInTime.getTime().getTime());
+            Timestamp ts = new Timestamp(pointInTime.getTime().getTime());
 
             tsPstmt.setTimestamp(1, ts);
             tsPstmt.executeUpdate();
 
-            String tsValueAsString = getSingleValue("testBug3620", "field1", null).toString();
+            this.rs = connNoTz.createStatement().executeQuery("SELECT field1 FROM testBug3620");
+            this.rs.next();
+            String tsValueAsString = new String(this.rs.getBytes(1));
+            Timestamp tsValueAsTimestamp = this.rs.getTimestamp(1);
+            System.out.println("Timestamp as String, inserted with no calendar: " + tsValueAsString.toString());
+            System.out.println("Timestamp as Timestamp, inserted with no calendar: " + tsValueAsTimestamp);
 
-            System.out.println("Timestamp as string with no calendar: " + tsValueAsString.toString());
+            connNoTz.createStatement().executeUpdate("DELETE FROM testBug3620");
 
             Calendar cal = Calendar.getInstance(TimeZone.getTimeZone("UTC"));
 
-            this.stmt.executeUpdate("DELETE FROM testBug3620");
-
-            Properties props = new Properties();
             props.put("useTimezone", "true");
-            // props.put("serverTimezone", "UTC");
+            props.put("serverTimezone", "UTC");
 
-            Connection tzConn = getConnectionWithProps(props);
-
-            Statement tsStmt = tzConn.createStatement();
-
-            tsPstmt = tzConn.prepareStatement("INSERT INTO testBug3620 VALUES (?)");
+            Connection connWithTz = getConnectionWithProps(props);
+            Statement tsStmt = connWithTz.createStatement();
+            tsPstmt = connWithTz.prepareStatement("INSERT INTO testBug3620 VALUES (?)");
 
             tsPstmt.setTimestamp(1, ts, cal);
             tsPstmt.executeUpdate();
 
-            tsValueAsString = getSingleValue("testBug3620", "field1", null).toString();
-
-            Timestamp tsValueAsTimestamp = (Timestamp) getSingleValue("testBug3620", "field1", null);
-
-            System.out.println("Timestamp as string with UTC calendar: " + tsValueAsString.toString());
-            System.out.println("Timestamp as Timestamp with UTC calendar: " + tsValueAsTimestamp);
+            this.rs = connNoTz.createStatement().executeQuery("SELECT field1 FROM testBug3620");
+            this.rs.next();
+            tsValueAsString = new String(this.rs.getBytes(1));
+            tsValueAsTimestamp = this.rs.getTimestamp(1);
+            System.out.println("Timestamp as String, inserted with UTC calendar: " + tsValueAsString.toString());
+            System.out.println("Timestamp as Timestamp, inserted with UTC calendar: " + tsValueAsTimestamp);
 
             this.rs = tsStmt.executeQuery("SELECT field1 FROM testBug3620");
             this.rs.next();
-
             Timestamp tsValueUTC = this.rs.getTimestamp(1, cal);
+            System.out.println("Timestamp specifying UTC calendar from statement: " + tsValueUTC.toString());
 
-            //
             // We use this testcase with other vendors, JDBC spec requires result set fields can only be read once, although MySQL doesn't require this ;)
-            //
             this.rs = tsStmt.executeQuery("SELECT field1 FROM testBug3620");
             this.rs.next();
-
             Timestamp tsValueStmtNoCal = this.rs.getTimestamp(1);
+            System.out.println("Timestamp specifying no calendar from statement: " + tsValueStmtNoCal.toString());
 
-            System.out.println("Timestamp specifying UTC calendar from normal statement: " + tsValueUTC.toString());
-
-            PreparedStatement tsPstmtRetr = tzConn.prepareStatement("SELECT field1 FROM testBug3620");
-
+            PreparedStatement tsPstmtRetr = connWithTz.prepareStatement("SELECT field1 FROM testBug3620");
             this.rs = tsPstmtRetr.executeQuery();
             this.rs.next();
-
             Timestamp tsValuePstmtUTC = this.rs.getTimestamp(1, cal);
-
             System.out.println("Timestamp specifying UTC calendar from prepared statement: " + tsValuePstmtUTC.toString());
 
-            //
             // We use this testcase with other vendors, JDBC spec requires result set fields can only be read once, although MySQL doesn't require this ;)
-            //
             this.rs = tsPstmtRetr.executeQuery();
             this.rs.next();
-
             Timestamp tsValuePstmtNoCal = this.rs.getTimestamp(1);
-
             System.out.println("Timestamp specifying no calendar from prepared statement: " + tsValuePstmtNoCal.toString());
 
-            long stmtDeltaTWithCal = (ts.getTime() - tsValueStmtNoCal.getTime());
-
+            long stmtDeltaTWithCal = (tsValueStmtNoCal.getTime() - ts.getTime());
             long deltaOrig = Math.abs(stmtDeltaTWithCal - pointInTimeOffset);
-
             assertTrue("Difference between original timestamp and timestamp retrieved using java.sql.Statement "
+                    + "set in database using UTC calendar is not ~= " + epsillon + " it is actually " + deltaOrig, (deltaOrig < epsillon));
+
+            long pStmtDeltaTWithCal = (tsValuePstmtNoCal.getTime() - ts.getTime());
+            deltaOrig = Math.abs(pStmtDeltaTWithCal - pointInTimeOffset);
+            assertTrue("Difference between original timestamp and timestamp retrieved using java.sql.PreparedStatement "
                     + "set in database using UTC calendar is not ~= " + epsillon + ", it is actually " + deltaOrig, (deltaOrig < epsillon));
 
-            long pStmtDeltaTWithCal = (ts.getTime() - tsValuePstmtNoCal.getTime());
-
-            System.out.println(Math.abs(pStmtDeltaTWithCal - pointInTimeOffset) + " < " + epsillon
-                    + (Math.abs(pStmtDeltaTWithCal - pointInTimeOffset) < epsillon));
-            assertTrue("Difference between original timestamp and timestamp retrieved using java.sql.PreparedStatement "
-                    + "set in database using UTC calendar is not ~= " + epsillon + ", it is actually " + pStmtDeltaTWithCal,
-                    (Math.abs(pStmtDeltaTWithCal - pointInTimeOffset) < epsillon));
-
-            System.out.println("Difference between original ts and ts with no calendar: " + (ts.getTime() - tsValuePstmtNoCal.getTime())
+            System.out.println("Difference between original ts and ts with no calendar: " + (tsValuePstmtNoCal.getTime() - ts.getTime())
                     + ", offset should be " + pointInTimeOffset);
         } finally {
-            this.stmt.executeUpdate("DROP TABLE IF EXISTS testBug3620");
+            TimeZone.setDefault(defaultTimeZone);
         }
     }
 
@@ -1390,10 +1361,6 @@ public class StatementRegressionTest extends BaseTestCase {
      *             if the test fails
      */
     public void testBug3873() throws Exception {
-        if (isRunningOnJdk131()) {
-            return; // test not valid on JDK-1.3.1
-        }
-
         PreparedStatement batchStmt = null;
 
         try {
@@ -1499,10 +1466,6 @@ public class StatementRegressionTest extends BaseTestCase {
      *             if the test fails
      */
     public void testBug4510() throws Exception {
-        if (isRunningOnJdk131()) {
-            return; // test not valid on JDK-1.3.1
-        }
-
         try {
             this.stmt.executeUpdate("DROP TABLE IF EXISTS testBug4510");
             this.stmt.executeUpdate("CREATE TABLE testBug4510 (field1 INT NOT NULL PRIMARY KEY AUTO_INCREMENT, field2 VARCHAR(100))");
@@ -1779,86 +1742,72 @@ public class StatementRegressionTest extends BaseTestCase {
     }
 
     /**
-     * Tests fix for BUG#5874, timezone correction goes in wrong 'direction'
-     * when useTimezone=true and server timezone differs from client timezone.
+     * Tests fix for BUG#5874, timezone correction goes in wrong 'direction' (when useTimezone=true and server timezone differs from client timezone).
      * 
      * @throws Exception
      *             if the test fails.
      */
     public void testBug5874() throws Exception {
-        /*
-         * try { String clientTimezoneName = "America/Los_Angeles"; String
-         * serverTimezoneName = "America/Chicago";
-         * 
-         * TimeZone.setDefault(TimeZone.getTimeZone(clientTimezoneName));
-         * 
-         * long epsillon = 3000; // 3 seconds difference
-         * 
-         * long clientTimezoneOffsetMillis = TimeZone.getDefault()
-         * .getRawOffset(); long serverTimezoneOffsetMillis =
-         * TimeZone.getTimeZone( serverTimezoneName).getRawOffset();
-         * 
-         * long offsetDifference = clientTimezoneOffsetMillis -
-         * serverTimezoneOffsetMillis;
-         * 
-         * Properties props = new Properties(); props.put("useTimezone",
-         * "true"); props.put("serverTimezone", serverTimezoneName);
-         * 
-         * Connection tzConn = getConnectionWithProps(props); Statement tzStmt =
-         * tzConn.createStatement();
-         * tzStmt.executeUpdate("DROP TABLE IF EXISTS timeTest"); tzStmt
-         * .executeUpdate("CREATE TABLE timeTest (tstamp DATETIME, t TIME)");
-         * 
-         * PreparedStatement pstmt = tzConn
-         * .prepareStatement("INSERT INTO timeTest VALUES (?, ?)");
-         * 
-         * long now = System.currentTimeMillis(); // Time in milliseconds //
-         * since 1/1/1970 GMT
-         * 
-         * Timestamp nowTstamp = new Timestamp(now); Time nowTime = new
-         * Time(now);
-         * 
-         * pstmt.setTimestamp(1, nowTstamp); pstmt.setTime(2, nowTime);
-         * pstmt.executeUpdate();
-         * 
-         * this.rs = tzStmt.executeQuery("SELECT * from timeTest");
-         * 
-         * // Timestamps look like this: 2004-11-29 13:43:21 SimpleDateFormat
-         * timestampFormat = new SimpleDateFormat( "yyyy-MM-dd HH:mm:ss");
-         * SimpleDateFormat timeFormat = new SimpleDateFormat("HH:mm:ss");
-         * 
-         * while (this.rs.next()) { // Driver now converts/checks
-         * DATE/TIME/TIMESTAMP/DATETIME types // when calling getString()...
-         * String retrTimestampString = new String(this.rs.getBytes(1));
-         * Timestamp retrTimestamp = this.rs.getTimestamp(1);
-         * 
-         * java.util.Date timestampOnServer = timestampFormat
-         * .parse(retrTimestampString);
-         * 
-         * long retrievedOffsetForTimestamp = retrTimestamp.getTime() -
-         * timestampOnServer.getTime();
-         * 
-         * assertTrue(
-         * "Difference between original timestamp and timestamp retrieved using client timezone is not "
-         * + offsetDifference, (Math .abs(retrievedOffsetForTimestamp -
-         * offsetDifference) < epsillon));
-         * 
-         * String retrTimeString = new String(this.rs.getBytes(2)); Time
-         * retrTime = this.rs.getTime(2);
-         * 
-         * java.util.Date timeOnServerAsDate = timeFormat
-         * .parse(retrTimeString); Time timeOnServer = new
-         * Time(timeOnServerAsDate.getTime());
-         * 
-         * long retrievedOffsetForTime = retrTime.getTime() -
-         * timeOnServer.getTime();
-         * 
-         * assertTrue(
-         * "Difference between original times and time retrieved using client timezone is not "
-         * + offsetDifference, (Math.abs(retrievedOffsetForTime -
-         * offsetDifference) < epsillon)); } } finally {
-         * this.stmt.executeUpdate("DROP TABLE IF EXISTS timeTest"); }
-         */
+        TimeZone defaultTimezone = TimeZone.getDefault();
+
+        try {
+            String clientTimezoneName = "America/Los_Angeles";
+            String serverTimezoneName = "America/Chicago";
+
+            TimeZone.setDefault(TimeZone.getTimeZone(clientTimezoneName));
+
+            long clientTimezoneOffsetMillis = TimeZone.getDefault().getRawOffset();
+            long serverTimezoneOffsetMillis = TimeZone.getTimeZone(serverTimezoneName).getRawOffset();
+
+            long offsetDifference = clientTimezoneOffsetMillis - serverTimezoneOffsetMillis;
+
+            SimpleDateFormat timestampFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+            SimpleDateFormat timeFormat = new SimpleDateFormat("HH:mm:ss");
+
+            long pointInTime = timestampFormat.parse("2004-10-04 09:19:00").getTime();
+
+            Properties props = new Properties();
+            props.put("useTimezone", "true");
+            props.put("serverTimezone", serverTimezoneName);
+            props.put("cacheDefaultTimezone", "false");
+
+            Connection tzConn = getConnectionWithProps(props);
+            Statement tzStmt = tzConn.createStatement();
+            createTable("testBug5874", "(tstamp DATETIME, t TIME)");
+
+            PreparedStatement tsPstmt = tzConn.prepareStatement("INSERT INTO testBug5874 VALUES (?, ?)");
+
+            tsPstmt.setTimestamp(1, new Timestamp(pointInTime));
+            tsPstmt.setTime(2, new Time(pointInTime));
+            tsPstmt.executeUpdate();
+
+            this.rs = tzStmt.executeQuery("SELECT * from testBug5874");
+
+            while (this.rs.next()) { // Driver now converts/checks DATE/TIME/TIMESTAMP/DATETIME types when calling getString()...
+                String retrTimestampString = new String(this.rs.getBytes(1));
+                Timestamp retrTimestamp = this.rs.getTimestamp(1);
+
+                java.util.Date timestampOnServer = timestampFormat.parse(retrTimestampString);
+
+                long retrievedOffsetForTimestamp = retrTimestamp.getTime() - timestampOnServer.getTime();
+
+                assertEquals("Original timestamp and timestamp retrieved using client timezone are not the same", offsetDifference, retrievedOffsetForTimestamp);
+
+                String retrTimeString = new String(this.rs.getBytes(2));
+                Time retrTime = this.rs.getTime(2);
+
+                java.util.Date timeOnServerAsDate = timeFormat.parse(retrTimeString);
+                Time timeOnServer = new Time(timeOnServerAsDate.getTime());
+
+                long retrievedOffsetForTime = retrTime.getTime() - timeOnServer.getTime();
+
+                assertEquals("Original time and time retrieved using client timezone are not the same", offsetDifference, retrievedOffsetForTime);
+            }
+
+            tzConn.close();
+        } finally {
+            TimeZone.setDefault(defaultTimezone);
+        }
     }
 
     public void testBug6823() throws SQLException {
@@ -2024,10 +1973,6 @@ public class StatementRegressionTest extends BaseTestCase {
     }
 
     public void testCsc4194() throws Exception {
-        if (isRunningOnJdk131()) {
-            return; // test not valid on JDK-1.3.1
-        }
-
         try {
             "".getBytes("Windows-31J");
         } catch (UnsupportedEncodingException ex) {
@@ -2121,10 +2066,6 @@ public class StatementRegressionTest extends BaseTestCase {
      *             if the test fails.
      */
     public void testGetGeneratedKeysAllCases() throws Exception {
-        if (isRunningOnJdk131()) {
-            return; // test not valid on JDK-1.3.1
-        }
-
         System.out.println("Using Statement.executeUpdate()\n");
 
         try {
@@ -2786,10 +2727,6 @@ public class StatementRegressionTest extends BaseTestCase {
      *             if the test fails
      */
     public void testBug17099() throws Exception {
-        if (isRunningOnJdk131()) {
-            return; // test not valid
-        }
-
         PreparedStatement pStmt = this.conn.prepareStatement("SELECT 1", Statement.RETURN_GENERATED_KEYS);
         assertNotNull(pStmt.getGeneratedKeys());
 
@@ -2986,7 +2923,7 @@ public class StatementRegressionTest extends BaseTestCase {
      *             if the test fails.
      */
     public void testBug20687() throws Exception {
-        if (!isRunningOnJdk131() && versionMeetsMinimum(5, 0)) {
+        if (versionMeetsMinimum(5, 0)) {
             createTable("testBug20687", "(field1 int)");
             Connection poolingConn = null;
 
@@ -3350,10 +3287,6 @@ public class StatementRegressionTest extends BaseTestCase {
      *             if the test fails.
      */
     public void testBug25073() throws Exception {
-        if (isRunningOnJdk131()) {
-            return;
-        }
-
         Properties props = new Properties();
         props.setProperty("rewriteBatchedStatements", "true");
         Connection multiConn = getConnectionWithProps(props);
@@ -6453,35 +6386,31 @@ public class StatementRegressionTest extends BaseTestCase {
         testBug71396MultiSettingsCheck("maxRows=2", 2, 2, 2);
 
         // Case 8: New session bue to user change
-        try {
-            this.stmt.execute("CREATE USER 'testBug71396User'@'%' IDENTIFIED BY 'testBug71396User'");
-            this.stmt.execute("GRANT SELECT ON *.* TO 'testBug71396User'@'%'");
+        createUser("'testBug71396User'@'%'", "IDENTIFIED BY 'testBug71396User'");
+        this.stmt.execute("GRANT SELECT ON *.* TO 'testBug71396User'@'%'");
 
-            testConn = getConnectionWithProps("");
-            testStmt = testBug71396StatementInit(testConn, 5);
+        testConn = getConnectionWithProps("");
+        testStmt = testBug71396StatementInit(testConn, 5);
 
-            ((MySQLConnection) testConn).changeUser("testBug71396User", "testBug71396User");
+        ((MySQLConnection) testConn).changeUser("testBug71396User", "testBug71396User");
 
-            Statement testStmtTmp = testConn.createStatement();
-            testRS = testStmtTmp.executeQuery("SELECT CURRENT_USER(), @@SESSION.SQL_SELECT_LIMIT");
-            assertTrue(testRS.next());
-            assertEquals("testBug71396User@%", testRS.getString(1));
-            assertTrue(String.format("expected:higher than<%d> but was:<%s>", Integer.MAX_VALUE, testRS.getBigDecimal(2)),
-                    testRS.getBigDecimal(2).compareTo(new BigDecimal(Integer.MAX_VALUE)) == 1);
-            testRS.close();
-            testStmtTmp.close();
+        Statement testStmtTmp = testConn.createStatement();
+        testRS = testStmtTmp.executeQuery("SELECT CURRENT_USER(), @@SESSION.SQL_SELECT_LIMIT");
+        assertTrue(testRS.next());
+        assertEquals("testBug71396User@%", testRS.getString(1));
+        assertTrue(String.format("expected:higher than<%d> but was:<%s>", Integer.MAX_VALUE, testRS.getBigDecimal(2)),
+                testRS.getBigDecimal(2).compareTo(new BigDecimal(Integer.MAX_VALUE)) == 1);
+        testRS.close();
+        testStmtTmp.close();
 
-            testRS = testStmt.executeQuery("SELECT CURRENT_USER(), @@SESSION.SQL_SELECT_LIMIT");
-            assertTrue(testRS.next());
-            assertEquals("testBug71396User@%", testRS.getString(1));
-            assertEquals(new BigDecimal(5), testRS.getBigDecimal(2));
-            testRS.close();
+        testRS = testStmt.executeQuery("SELECT CURRENT_USER(), @@SESSION.SQL_SELECT_LIMIT");
+        assertTrue(testRS.next());
+        assertEquals("testBug71396User@%", testRS.getString(1));
+        assertEquals(new BigDecimal(5), testRS.getBigDecimal(2));
+        testRS.close();
 
-            testStmt.close();
-            testConn.close();
-        } finally {
-            this.stmt.execute("DROP USER 'testBug71396User'");
-        }
+        testStmt.close();
+        testConn.close();
 
         // Case 9: New session due to reconnection
         testConn = getConnectionWithProps("");
@@ -6489,7 +6418,7 @@ public class StatementRegressionTest extends BaseTestCase {
 
         ((MySQLConnection) testConn).createNewIO(true); // true or false argument is irrelevant for this test case
 
-        Statement testStmtTmp = testConn.createStatement();
+        testStmtTmp = testConn.createStatement();
         testRS = testStmtTmp.executeQuery("SELECT @@SESSION.SQL_SELECT_LIMIT");
         assertTrue(testRS.next());
         assertTrue(String.format("expected:higher than<%d> but was:<%s>", Integer.MAX_VALUE, testRS.getBigDecimal(1)),
@@ -7295,5 +7224,428 @@ public class StatementRegressionTest extends BaseTestCase {
         testRs.close();
         testPstmt.close();
         testConn.close();
+    }
+
+    /**
+     * Tests fix for BUG#50348 - mysql connector/j 5.1.10 render the wrong value for dateTime column in GMT DB.
+     * 
+     * With the right time zone settings in server and client, and using the property 'useTimezone=true', time shifts are computed in the opposite direction of
+     * those that are computed otherwise.
+     * 
+     * This issue is observed when the server is configured with time zone 'GMT' and the client other than 'GMT'. However, if the server's time zone is one
+     * equivalent to 'GMT' but under a different identifier, say "UTC" or "GMT+00", the wrong behavior isn't observed anymore.
+     */
+    public void testBug50348() throws Exception {
+        final TimeZone defaultTZ = TimeZone.getDefault();
+
+        final Properties testConnProps = new Properties();
+        testConnProps.setProperty("useTimezone", "true");
+        testConnProps.setProperty("cacheDefaultTimezone", "false");
+
+        Connection testConn = null;
+
+        try {
+            TimeZone.setDefault(TimeZone.getTimeZone("America/Chicago")); // ~~ CST (UTC-06)
+            final SimpleDateFormat tsFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+            final Timestamp timestamp = new Timestamp(tsFormat.parse("2015-01-01 10:00:00").getTime());
+            final SimpleDateFormat tFormat = new SimpleDateFormat("HH:mm:ss");
+            final Time time = new Time(tFormat.parse("10:00:00").getTime());
+
+            // Test a number of time zones that coincide with 'GMT' on the some specifip point in time.
+            for (String tz : new String[] { "Europe/Lisbon", "UTC", "GMT+00", "GMT" }) {
+                //  Europe/Lisbon ~~ WET (UTC) on 2015-01-01; ~~ CET (UTC+01) on 1970-01-01
+                System.out.println("\nServer time zone: " + tz);
+                System.out.println("---------------------------------------------------");
+
+                testConnProps.setProperty("serverTimezone", tz);
+                testConn = getConnectionWithProps(testConnProps);
+
+                checkResultSetForTestBug50348(testConn, "2015-01-01 04:00:00.0", tz.equals("Europe/Lisbon") ? "03:00:00" : "04:00:00");
+                checkPreparedStatementForTestBug50348(testConn, timestamp, time, "2015-01-01 16:00:00", tz.equals("Europe/Lisbon") ? "17:00:00" : "16:00:00");
+
+                testConn.close();
+            }
+
+            // Cycle through a wide range of generic 'GMT+/-hh:mm' and assert the expected time shift for a specific point in time. 
+            for (int tzOffset = -15; tzOffset <= 15; tzOffset++) { // cover a wider range than standard
+                for (int tzSubOffset : new int[] { 0, 30 }) {
+                    final StringBuilder tz = new StringBuilder("GMT");
+                    tz.append(tzOffset < 0 ? "-" : "+").append(String.format("%02d", Math.abs(tzOffset)));
+                    tz.append(String.format(":%02d", tzSubOffset));
+
+                    System.out.println("\nServer time zone: " + tz.toString());
+                    System.out.println("---------------------------------------------------");
+                    testConnProps.setProperty("serverTimezone", tz.toString());
+                    testConn = getConnectionWithProps(testConnProps);
+
+                    final int diffTzOffset = tzOffset + 6; // CST offset = -6 hours
+                    final Calendar cal = Calendar.getInstance();
+
+                    cal.setTime(tsFormat.parse("2015-01-01 10:00:00"));
+                    cal.add(Calendar.HOUR, -diffTzOffset);
+                    cal.add(Calendar.MINUTE, tzOffset < 0 ? tzSubOffset : -tzSubOffset);
+                    String expectedTimestampFromRS = tsFormat.format(cal.getTime()) + ".0";
+                    cal.setTime(tFormat.parse("10:00:00"));
+                    cal.add(Calendar.HOUR, -diffTzOffset);
+                    cal.add(Calendar.MINUTE, tzOffset < 0 ? tzSubOffset : -tzSubOffset);
+                    String expectedTimeFromRS = tFormat.format(cal.getTime());
+                    checkResultSetForTestBug50348(testConn, expectedTimestampFromRS, expectedTimeFromRS);
+
+                    cal.setTime(tsFormat.parse("2015-01-01 10:00:00"));
+                    cal.add(Calendar.HOUR, diffTzOffset);
+                    cal.add(Calendar.MINUTE, tzOffset < 0 ? -tzSubOffset : tzSubOffset);
+                    String expectedTimestampFromPS = tsFormat.format(cal.getTime());
+                    cal.setTime(tFormat.parse("10:00:00"));
+                    cal.add(Calendar.HOUR, diffTzOffset);
+                    cal.add(Calendar.MINUTE, tzOffset < 0 ? -tzSubOffset : tzSubOffset);
+                    String expectedTimeFromPS = tFormat.format(cal.getTime());
+                    checkPreparedStatementForTestBug50348(testConn, timestamp, time, expectedTimestampFromPS, expectedTimeFromPS);
+
+                    testConn.close();
+                }
+            }
+        } finally {
+            TimeZone.setDefault(defaultTZ);
+
+            if (testConn != null) {
+                testConn.close();
+            }
+        }
+    }
+
+    private void checkResultSetForTestBug50348(Connection testConn, String expectedTimestamp, String expectedTime) throws SQLException {
+        this.rs = testConn.createStatement().executeQuery("SELECT '2015-01-01 10:00:00', '10:00:00'");
+        this.rs.next();
+        String timestampAsString = this.rs.getTimestamp(1).toString();
+        String timeAsString = this.rs.getTime(2).toString();
+        String alert = expectedTimestamp.equals(timestampAsString) && expectedTime.equals(timeAsString) ? "" : " <-- (!)";
+        System.out.printf("[RS] expected: '%s' | '%s'%n", expectedTimestamp, expectedTime);
+        System.out.printf("       actual: '%s' | '%s' %s%n", timestampAsString, timeAsString, alert);
+        assertEquals(expectedTimestamp, timestampAsString);
+        assertEquals(expectedTime, timeAsString);
+    }
+
+    private void checkPreparedStatementForTestBug50348(Connection testConn, Timestamp timestamp, Time time, String expectedTimestamp, String expectedTime)
+            throws SQLException {
+        PreparedStatement testPstmt = testConn.prepareStatement("SELECT ?, ?");
+        testPstmt.setTimestamp(1, timestamp);
+        testPstmt.setTime(2, time);
+
+        this.rs = testPstmt.executeQuery();
+        this.rs.next();
+        String timestampAsString = new String(this.rs.getBytes(1));
+        String timeAsString = new String(this.rs.getBytes(2));
+        String alert = expectedTimestamp.equals(timestampAsString) && expectedTime.equals(timeAsString) ? "" : " <-- (!)";
+        System.out.printf("[PS] expected: '%s' | '%s'%n", expectedTimestamp, expectedTime);
+        System.out.printf("       actual: '%s' | '%s' %s%n", timestampAsString, timeAsString, alert);
+        assertEquals(expectedTimestamp, timestampAsString);
+        assertEquals(expectedTime, timeAsString);
+    }
+
+    /**
+     * Tests fix for Bug#77449 - Add 'truncateFractionalSeconds=true|false' property (contribution).
+     * 
+     * The property actually added was 'sendFractionalSeconds' and works as the opposite of the proposed one.
+     */
+    public void testBug77449() throws Exception {
+        if (!versionMeetsMinimum(5, 6, 4)) {
+            return;
+        }
+
+        Timestamp originalTs = new Timestamp(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS").parse("2014-12-31 23:59:59.999").getTime());
+        Timestamp roundedTs = new Timestamp(originalTs.getTime() + 1);
+        Timestamp truncatedTs = new Timestamp(originalTs.getTime() - 999);
+
+        assertEquals("2014-12-31 23:59:59.999", originalTs.toString());
+        assertEquals("2014-12-31 23:59:59.0", TimeUtil.truncateFractionalSeconds(originalTs).toString());
+
+        createTable("testBug77449", "(id INT PRIMARY KEY, ts_short TIMESTAMP, ts_long TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6))");
+        createProcedure("testBug77449", "(ts_short TIMESTAMP, ts_long TIMESTAMP(6)) BEGIN SELECT ts_short, ts_long; END");
+
+        for (int tst = 0; tst < 8; tst++) {
+            boolean useLegacyDatetimeCode = (tst & 0x1) != 0;
+            boolean useServerSidePreparedStatements = (tst & 0x2) != 0;
+            boolean sendFractionalSeconds = (tst & 0x4) != 0;
+
+            String testCase = String.format("Case: %d [ %s | %s | %s ]", tst, useLegacyDatetimeCode ? "useLegDTCode" : "-",
+                    useServerSidePreparedStatements ? "useSSPS" : "-", sendFractionalSeconds ? "sendFracSecs" : "-");
+
+            Properties props = new Properties();
+            props.setProperty("statementInterceptors", TestBug77449StatementInterceptor.class.getName());
+            props.setProperty("useLegacyDatetimeCode", Boolean.toString(useLegacyDatetimeCode));
+            props.setProperty("useServerSidePreparedStatements", Boolean.toString(useServerSidePreparedStatements));
+            props.setProperty("sendFractionalSeconds", Boolean.toString(sendFractionalSeconds));
+
+            Connection testConn = getConnectionWithProps(props);
+
+            // Send timestamps as Strings, using Statement -> no truncation occurs.
+            Statement testStmt = testConn.createStatement();
+            testStmt.executeUpdate("INSERT INTO testBug77449 VALUES (1, '2014-12-31 23:59:59.999', '2014-12-31 23:59:59.999')/* no_ts_trunk */");
+            testStmt.close();
+
+            // Send timestamps using PreparedStatement -> truncation occurs according to 'sendFractionalSeconds' value.
+            PreparedStatement testPStmt = testConn.prepareStatement("INSERT INTO testBug77449 VALUES (2, ?, ?)");
+            testPStmt.setTimestamp(1, originalTs);
+            testPStmt.setTimestamp(2, originalTs);
+            assertEquals(testCase, 1, testPStmt.executeUpdate());
+            testPStmt.close();
+
+            // Send timestamps using UpdatableResultSet -> truncation occurs according to 'sendFractionalSeconds' value.
+            testStmt = testConn.createStatement(ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_UPDATABLE);
+            testStmt.executeUpdate("INSERT INTO testBug77449 VALUES (3, NOW(), NOW())/* no_ts_trunk */"); // insert dummy row
+            this.rs = testStmt.executeQuery("SELECT * FROM testBug77449 WHERE id = 3");
+            assertTrue(this.rs.next());
+            this.rs.updateTimestamp("ts_short", originalTs);
+            this.rs.updateTimestamp("ts_long", originalTs);
+            this.rs.updateRow();
+            this.rs.moveToInsertRow();
+            this.rs.updateInt("id", 4);
+            this.rs.updateTimestamp("ts_short", originalTs);
+            this.rs.updateTimestamp("ts_long", originalTs);
+            this.rs.insertRow();
+
+            // Assert values from previous inserts/updates.
+            // 1st row: from Statement sent as String, no subject to TZ conversions.
+            this.rs = this.stmt.executeQuery("SELECT * FROM testBug77449 WHERE id = 1");
+            assertTrue(this.rs.next());
+            assertEquals(1, this.rs.getInt(1));
+            assertEquals(testCase, roundedTs, this.rs.getTimestamp(2));
+            assertEquals(testCase, originalTs, this.rs.getTimestamp(3));
+            // 2nd row: from PreparedStatement; 3rd row: from UpdatableResultSet.updateRow(); 4th row: from UpdatableResultSet.insertRow()
+            this.rs = testStmt.executeQuery("SELECT * FROM testBug77449 WHERE id >= 2");
+            for (int i = 2; i <= 4; i++) {
+                assertTrue(this.rs.next());
+                assertEquals(i, this.rs.getInt(1));
+                assertEquals(testCase, sendFractionalSeconds ? roundedTs : truncatedTs, this.rs.getTimestamp(2));
+                assertEquals(testCase, sendFractionalSeconds ? originalTs : truncatedTs, this.rs.getTimestamp(3));
+            }
+
+            this.stmt.execute("DELETE FROM testBug77449");
+
+            // Compare Connector/J with client trunction -> truncation occurs according to 'sendFractionalSeconds' value.
+            testPStmt = testConn.prepareStatement("SELECT ? = ?");
+            testPStmt.setTimestamp(1, originalTs);
+            testPStmt.setTimestamp(2, truncatedTs);
+            this.rs = testPStmt.executeQuery();
+            assertTrue(this.rs.next());
+            if (sendFractionalSeconds) {
+                assertFalse(testCase, this.rs.getBoolean(1));
+            } else {
+                assertTrue(testCase, this.rs.getBoolean(1));
+            }
+            testPStmt.close();
+
+            // Send timestamps using CallableStatement -> truncation occurs according to 'sendFractionalSeconds' value.
+            CallableStatement cstmt = testConn.prepareCall("{call testBug77449(?, ?)}");
+            cstmt.setTimestamp("ts_short", originalTs);
+            cstmt.setTimestamp("ts_long", originalTs);
+            cstmt.execute();
+            this.rs = cstmt.getResultSet();
+            assertTrue(this.rs.next());
+            assertEquals(testCase, sendFractionalSeconds ? roundedTs : truncatedTs, this.rs.getTimestamp(1));
+            assertEquals(testCase, sendFractionalSeconds ? originalTs : truncatedTs, this.rs.getTimestamp(2));
+
+            testConn.close();
+        }
+    }
+
+    public static class TestBug77449StatementInterceptor extends BaseStatementInterceptor {
+        private boolean sendFracSecs = false;
+
+        @Override
+        public void init(com.mysql.jdbc.Connection conn, Properties props) throws SQLException {
+            this.sendFracSecs = Boolean.parseBoolean(props.getProperty("sendFractionalSeconds"));
+            super.init(conn, props);
+        }
+
+        @Override
+        public ResultSetInternalMethods preProcess(String sql, com.mysql.jdbc.Statement interceptedStatement, com.mysql.jdbc.Connection connection)
+                throws SQLException {
+            String query = sql;
+            if (query == null && interceptedStatement instanceof com.mysql.jdbc.PreparedStatement) {
+                query = interceptedStatement.toString();
+                query = query.substring(query.indexOf(':') + 2);
+            }
+
+            if ((query.startsWith("INSERT") || query.startsWith("UPDATE") || query.startsWith("CALL")) && !query.contains("no_ts_trunk")) {
+                if (this.sendFracSecs ^ query.contains(".999")) {
+                    fail("Wrong TIMESTAMP trunctation in query [" + query + "]");
+                }
+            }
+            return super.preProcess(sql, interceptedStatement, connection);
+        }
+    }
+
+    /**
+     * Tests fix for BUG#77681 - rewrite replace sql like insert when rewriteBatchedStatements=true (contribution)
+     * 
+     * When using 'rewriteBatchedStatements=true' we rewrite several batched statements into one single query by extending its VALUES clause. Although INSERT
+     * REPLACE have the same syntax, this wasn't happening for REPLACE statements.
+     * 
+     * This tests the number of queries actually sent to server when rewriteBatchedStatements is used and not by using a StatementInterceptor. The test is
+     * repeated for server side prepared statements. Without the fix, this test fails while checking the number of expected REPLACE queries.
+     */
+    public void testBug77681() throws Exception {
+        createTable("testBug77681", "(id INT, txt VARCHAR(50), PRIMARY KEY (id))");
+
+        Properties props = new Properties();
+        props.setProperty("statementInterceptors", TestBug77681StatementInterceptor.class.getName());
+
+        for (int tst = 0; tst < 4; tst++) {
+            props.setProperty("useServerPrepStmts", Boolean.toString((tst & 0x1) != 0));
+            props.setProperty("rewriteBatchedStatements", Boolean.toString((tst & 0x2) != 0));
+            Connection testConn = getConnectionWithProps(props);
+
+            PreparedStatement testPstmt = testConn.prepareStatement("INSERT INTO testBug77681 VALUES (?, ?)");
+            testPstmt.setInt(1, 1);
+            testPstmt.setString(2, "one");
+            testPstmt.addBatch();
+            testPstmt.setInt(1, 2);
+            testPstmt.setString(2, "two");
+            testPstmt.addBatch();
+            testPstmt.setInt(1, 3);
+            testPstmt.setString(2, "three");
+            testPstmt.addBatch();
+            testPstmt.setInt(1, 4);
+            testPstmt.setString(2, "four");
+            testPstmt.addBatch();
+            testPstmt.setInt(1, 5);
+            testPstmt.setString(2, "five");
+            testPstmt.addBatch();
+            testPstmt.executeBatch();
+            testPstmt.close();
+
+            testPstmt = testConn.prepareStatement("REPLACE INTO testBug77681 VALUES (?, ?)");
+            testPstmt.setInt(1, 2);
+            testPstmt.setString(2, "TWO");
+            testPstmt.addBatch();
+            testPstmt.setInt(1, 4);
+            testPstmt.setString(2, "FOUR");
+            testPstmt.addBatch();
+            testPstmt.setInt(1, 6);
+            testPstmt.setString(2, "SIX");
+            testPstmt.addBatch();
+            testPstmt.executeBatch();
+            testPstmt.close();
+
+            Statement testStmt = testConn.createStatement();
+            testStmt.clearBatch();
+            testStmt.addBatch("INSERT INTO testBug77681 VALUES (7, 'seven')");
+            testStmt.addBatch("INSERT INTO testBug77681 VALUES (8, 'eight')");
+            testStmt.addBatch("INSERT INTO testBug77681 VALUES (9, 'nine')");
+            testStmt.addBatch("INSERT INTO testBug77681 VALUES (10, 'ten')");
+            testStmt.addBatch("INSERT INTO testBug77681 VALUES (11, 'eleven')");
+            testStmt.executeBatch();
+
+            testStmt.clearBatch();
+            testStmt.addBatch("REPLACE INTO testBug77681 VALUES (8, 'EIGHT')");
+            testStmt.addBatch("REPLACE INTO testBug77681 VALUES (10, 'TEN')");
+            testStmt.addBatch("REPLACE INTO testBug77681 VALUES (12, 'TWELVE')");
+            testStmt.addBatch("REPLACE INTO testBug77681 VALUES (14, 'FOURTEEN')");
+            testStmt.addBatch("REPLACE INTO testBug77681 VALUES (16, 'SIXTEEN')");
+            testStmt.executeBatch();
+
+            this.stmt.executeUpdate("DELETE FROM testBug77681");
+        }
+    }
+
+    public static class TestBug77681StatementInterceptor extends BaseStatementInterceptor {
+        private static final char[] expectedNonRWBS = new char[] { 'I', 'I', 'I', 'I', 'I', 'R', 'R', 'R', 'I', 'I', 'I', 'I', 'I', 'R', 'R', 'R', 'R', 'R' };
+        private static final char[] expectedRWBS = new char[] { 'I', 'R', 'I', 'R' };
+
+        private char[] expected;
+        private int execCounter = 0;
+
+        @Override
+        public void init(com.mysql.jdbc.Connection conn, Properties props) throws SQLException {
+            super.init(conn, props);
+            System.out.println("\nuseServerPrepStmts: " + props.getProperty("useServerPrepStmts") + " | rewriteBatchedStatements: "
+                    + props.getProperty("rewriteBatchedStatements"));
+            System.out.println("--------------------------------------------------------------------------------");
+            this.expected = Boolean.parseBoolean(props.getProperty("rewriteBatchedStatements")) ? expectedRWBS : expectedNonRWBS;
+        }
+
+        @Override
+        public ResultSetInternalMethods preProcess(String sql, com.mysql.jdbc.Statement interceptedStatement, com.mysql.jdbc.Connection connection)
+                throws SQLException {
+            String query = sql;
+            if (query == null && interceptedStatement instanceof com.mysql.jdbc.PreparedStatement) {
+                query = interceptedStatement.toString();
+                query = query.substring(query.indexOf(':') + 2);
+            }
+            if (query.indexOf("testBug77681") != -1) {
+                System.out.println(this.execCounter + " --> " + query);
+                if (this.execCounter > this.expected.length) {
+                    fail("Failed to rewrite statements");
+                }
+                assertEquals("Wrong statement at execution number " + this.execCounter, this.expected[this.execCounter++], query.charAt(0));
+            }
+            return super.preProcess(sql, interceptedStatement, connection);
+        }
+    }
+
+    /**
+     * Tests fix for Bug#21876798 - CONNECTOR/J WITH MYSQL FABRIC AND SPRING PRODUCES PROXY ERROR.
+     * 
+     * Although this is a Fabric related bug we are able reproduce it using a couple of multi-host connections.
+     * 
+     * Duplicated in testsuite.regression.jdbc4.StatementRegressionTest.testBug21876798().
+     */
+    public void testBug21876798() throws Exception {
+        createTable("testBug21876798", "(tst INT, val INT)");
+
+        for (int tst = 0; tst < 4; tst++) {
+            boolean useServerPrepStmts = (tst & 0x1) != 0;
+            boolean rewriteBatchedStatements = (tst & 0x2) != 0;
+
+            Properties props = new Properties();
+            props.setProperty("useServerPrepStmts", Boolean.toString(useServerPrepStmts));
+            props.setProperty("rewriteBatchedStatements", Boolean.toString(rewriteBatchedStatements));
+
+            String testCase = String
+                    .format("Case: %d [ %s | %s ]", tst, useServerPrepStmts ? "useSPS" : "-", rewriteBatchedStatements ? "rwBatchedStmts" : "-");
+
+            Connection highLevelConn = getLoadBalancedConnection(props);
+            assertTrue(testCase, highLevelConn.getClass().getName().startsWith("com.sun.proxy"));
+
+            Connection lowLevelConn = getMasterSlaveReplicationConnection(props);
+            // This simulates the behavior from Fabric connections that are causing the problem.
+            ((ReplicationConnection) lowLevelConn).setProxy((MySQLConnection) highLevelConn);
+
+            // Insert data. We need at least 4 rows to force rewriting batch statements.
+            this.pstmt = lowLevelConn.prepareStatement("INSERT INTO testBug21876798 VALUES (?, ?)");
+            for (int i = 1; i <= 4; i++) {
+                this.pstmt.setInt(1, tst);
+                this.pstmt.setInt(2, i);
+                this.pstmt.addBatch();
+            }
+            this.pstmt.executeBatch();
+
+            // Check if data was inserted correctly.
+            this.rs = this.stmt.executeQuery("SELECT val FROM testBug21876798 WHERE tst = " + tst);
+            for (int i = 1; i <= 4; i++) {
+                assertTrue(testCase + "/Row#" + i, this.rs.next());
+                assertEquals(testCase + "/Row#" + i, i, this.rs.getInt(1));
+            }
+            assertFalse(testCase, this.rs.next());
+
+            // Update data. We need at least 4 rows to force rewriting batch statements.
+            this.pstmt = lowLevelConn.prepareStatement("UPDATE testBug21876798 SET val = ? WHERE tst = ? AND val = ?");
+            for (int i = 1; i <= 4; i++) {
+                this.pstmt.setInt(1, -i);
+                this.pstmt.setInt(2, tst);
+                this.pstmt.setInt(3, i);
+                this.pstmt.addBatch();
+            }
+            this.pstmt.executeBatch();
+
+            // Check if data was updated correctly.
+            this.rs = this.stmt.executeQuery("SELECT val FROM testBug21876798 WHERE tst = " + tst);
+            for (int i = 1; i <= 4; i++) {
+                assertTrue(testCase + "/Row#" + i, this.rs.next());
+                assertEquals(testCase + "/Row#" + i, -i, this.rs.getInt(1));
+            }
+            assertFalse(testCase, this.rs.next());
+        }
     }
 }

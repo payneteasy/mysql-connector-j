@@ -4,7 +4,7 @@
   The MySQL Connector/J is licensed under the terms of the GPLv2
   <http://www.gnu.org/licenses/old-licenses/gpl-2.0.html>, like most MySQL Connectors.
   There are special exceptions to the terms and conditions of the GPLv2 as it is applied to
-  this software, see the FLOSS License Exception
+  this software, see the FOSS License Exception
   <http://www.mysql.com/about/legal/licensing/foss-exception.html>.
 
   This program is free software; you can redistribute it and/or modify it under the terms
@@ -1185,10 +1185,6 @@ public class MetaDataRegressionTest extends BaseTestCase {
      * @throws Exception
      */
     public void testBug13277() throws Exception {
-        if (isRunningOnJdk131()) {
-            return; // test not valid on JDK-1.3.1
-        }
-
         createTable("testBug13277", "(field1 INT NOT NULL PRIMARY KEY AUTO_INCREMENT, field2 VARCHAR(32))");
 
         try {
@@ -1382,7 +1378,7 @@ public class MetaDataRegressionTest extends BaseTestCase {
         if (i == 1) {
             // This is INT field but still processed in
             // ResultsetMetaData.getColumnDisplaySize
-            assertEquals(17, rsmd.getColumnDisplaySize(1));
+            assertEquals(20, rsmd.getColumnDisplaySize(1));
         }
 
         if (versionMeetsMinimum(4, 1)) {
@@ -1411,10 +1407,6 @@ public class MetaDataRegressionTest extends BaseTestCase {
      * @throws Exception
      */
     public void testBug21267() throws Exception {
-        if (isRunningOnJdk131()) {
-            return; // no parameter metadata on JDK-1.3.1
-        }
-
         createTable("bug21267", "(`Col1` int(11) NOT NULL,`Col2` varchar(45) default NULL,`Col3` varchar(45) default NULL,PRIMARY KEY  (`Col1`))");
 
         this.pstmt = this.conn.prepareStatement("SELECT Col1, Col2,Col4 FROM bug21267 WHERE Col1=?");
@@ -1670,12 +1662,10 @@ public class MetaDataRegressionTest extends BaseTestCase {
 
             assertNotSame(dbmdUsingShow.getClass(), dbmdUsingInfoSchema.getClass());
 
-            if (!isRunningOnJdk131()) {
-                rsShow = dbmdUsingShow.getSchemas();
-                rsInfoSchema = dbmdUsingInfoSchema.getSchemas();
+            rsShow = dbmdUsingShow.getSchemas();
+            rsInfoSchema = dbmdUsingInfoSchema.getSchemas();
 
-                compareResultSets(rsShow, rsInfoSchema);
-            }
+            compareResultSets(rsShow, rsInfoSchema);
 
             /*
              * rsShow = dbmdUsingShow.getTables(connShow.getCatalog(), null,
@@ -2268,10 +2258,10 @@ public class MetaDataRegressionTest extends BaseTestCase {
                 Types.CHAR, // 9. COLUMN_NAME String => column name; null when TYPE is tableIndexStatistic
                 Types.CHAR, // 10. ASC_OR_DESC String => column sort sequence, "A" => ascending, "D" => descending, may be null if sort sequence is not
                             // supported; null when TYPE is tableIndexStatistic
-                Types.INTEGER, // 11. CARDINALITY int => When TYPE is tableIndexStatistic, then this is the number of rows in the table; otherwise, it is the
-                               // number of unique values in the index.
-                Types.INTEGER, // 12. PAGES int => When TYPE is tableIndexStatisic then this is the number of pages used for the table, otherwise it is the
-                               // number of pages used for the current index.
+                Util.isJdbc42() ? Types.BIGINT : Types.INTEGER, // 11. CARDINALITY int/long => When TYPE is tableIndexStatistic, then this is the number of rows
+                                                                // in the table; otherwise, it is the number of unique values in the index.
+                Util.isJdbc42() ? Types.BIGINT : Types.INTEGER, // 12. PAGES int/long => When TYPE is tableIndexStatisic then this is the number of pages used
+                                                                // for the table, otherwise it is the number of pages used for the current index.
                 Types.CHAR // 13. FILTER_CONDITION String => Filter condition, if any. (may be null)
         };
 
@@ -2735,7 +2725,7 @@ public class MetaDataRegressionTest extends BaseTestCase {
                 assertTrue("No database selected", false);
             }
 
-            this.stmt.executeUpdate("grant usage on *.* to 'bug61203user'@'%' identified by 'foo'");
+            createUser("'bug61203user'@'%'", "identified by 'foo'");
             this.stmt.executeUpdate("delete from mysql.db where user='bug61203user'");
             this.stmt.executeUpdate("insert into mysql.db (Host, Db, User, Select_priv, Insert_priv, Update_priv, Delete_priv, Create_priv,Drop_priv, "
                     + "Grant_priv, References_priv, Index_priv, Alter_priv, Create_tmp_table_priv, Lock_tables_priv, Create_view_priv,"
@@ -2766,7 +2756,6 @@ public class MetaDataRegressionTest extends BaseTestCase {
         } finally {
             dropFunction("testbug61203fn");
             dropProcedure("testbug61203pr");
-            this.stmt.executeUpdate("drop user 'bug61203user'@'%'");
 
             if (cStmt != null) {
                 cStmt.close();
@@ -2937,14 +2926,14 @@ public class MetaDataRegressionTest extends BaseTestCase {
         assertEquals("Wrong column or single column not found", this.rs.getString(2), "f1");
 
         st.execute("DROP  TABLE IF EXISTS testBug63800");
-        st.execute("CREATE TABLE testBug63800(f1 TIMESTAMP ON UPDATE CURRENT_TIMESTAMP)");
+        st.execute("CREATE TABLE testBug63800(f1 TIMESTAMP NULL ON UPDATE CURRENT_TIMESTAMP)");
         dmd = con.getMetaData();
         this.rs = dmd.getVersionColumns(dbname, dbname, "testBug63800");
         assertTrue("1 column must be found", this.rs.next());
         assertEquals("Wrong column or single column not found", this.rs.getString(2), "f1");
 
         st.execute("DROP  TABLE IF EXISTS testBug63800");
-        st.execute("CREATE TABLE testBug63800(f1 TIMESTAMP NULL, f2 TIMESTAMP ON UPDATE CURRENT_TIMESTAMP)");
+        st.execute("CREATE TABLE testBug63800(f1 TIMESTAMP NULL, f2 TIMESTAMP NULL ON UPDATE CURRENT_TIMESTAMP)");
         dmd = con.getMetaData();
         this.rs = dmd.getVersionColumns(dbname, dbname, "testBug63800");
         assertTrue("1 column must be found", this.rs.next());
@@ -3023,7 +3012,7 @@ public class MetaDataRegressionTest extends BaseTestCase {
         }
 
         // ALTER 2 test
-        st.execute("ALTER TABLE testBug63800 CHANGE COLUMN `f2` `f2` TIMESTAMP ON UPDATE CURRENT_TIMESTAMP");
+        st.execute("ALTER TABLE testBug63800 CHANGE COLUMN `f2` `f2` TIMESTAMP NULL ON UPDATE CURRENT_TIMESTAMP");
         dmd = con.getMetaData();
         this.rs = dmd.getVersionColumns(dbname, dbname, "testBug63800");
         cnt = 0;
@@ -3033,7 +3022,7 @@ public class MetaDataRegressionTest extends BaseTestCase {
         assertEquals("2 column must be found", cnt, 2);
 
         st.execute("DROP  TABLE IF EXISTS testBug63800");
-        st.execute("CREATE TABLE testBug63800(f1 TIMESTAMP, f2 DATETIME ON UPDATE CURRENT_TIMESTAMP, f3 TIMESTAMP ON UPDATE CURRENT_TIMESTAMP)");
+        st.execute("CREATE TABLE testBug63800(f1 TIMESTAMP, f2 DATETIME ON UPDATE CURRENT_TIMESTAMP, f3 TIMESTAMP NULL ON UPDATE CURRENT_TIMESTAMP)");
         dmd = con.getMetaData();
         this.rs = dmd.getVersionColumns(dbname, dbname, "testBug63800");
         cnt = 0;
@@ -3851,11 +3840,10 @@ public class MetaDataRegressionTest extends BaseTestCase {
                 + "FORCE,FULLTEXT,GENERATED,HIGH_PRIORITY,HOUR_MICROSECOND,HOUR_MINUTE,HOUR_SECOND,IF,IGNORE,INDEX,INFILE,INOUT,INT1,INT2,INT3,INT4,INT8,"
                 + "IO_AFTER_GTIDS,IO_BEFORE_GTIDS,ITERATE,KEYS,KILL,LEAVE,LIMIT,LINEAR,LINES,LOAD,LOCALTIME,LOCALTIMESTAMP,LOCK,LONG,LONGBLOB,LONGTEXT,LOOP,"
                 + "LOW_PRIORITY,MASTER_BIND,MASTER_SSL_VERIFY_SERVER_CERT,MAXVALUE,MEDIUMBLOB,MEDIUMINT,MEDIUMTEXT,MIDDLEINT,MINUTE_MICROSECOND,MINUTE_SECOND,"
-                + "MOD,MODIFIES,NO_WRITE_TO_BINLOG,OPTIMIZE,OPTIMIZER_COSTS,OPTIONALLY,OUT,OUTFILE,PARSE_GCOL_EXPR,PARTITION,PURGE,RANGE,READS,READ_WRITE,"
-                + "REGEXP,RELEASE,RENAME,REPEAT,REPLACE,REQUIRE,RESIGNAL,RETURN,RLIKE,SCHEMAS,SECOND_MICROSECOND,SENSITIVE,SEPARATOR,SHOW,SIGNAL,SPATIAL,"
-                + "SPECIFIC,SQLEXCEPTION,SQLWARNING,SQL_BIG_RESULT,SQL_CALC_FOUND_ROWS,SQL_SMALL_RESULT,SSL,STARTING,STORED,STRAIGHT_JOIN,TERMINATED,TINYBLOB,"
-                + "TINYINT,TINYTEXT,TRIGGER,UNDO,UNLOCK,UNSIGNED,USE,UTC_DATE,UTC_TIME,UTC_TIMESTAMP,VARBINARY,VARCHARACTER,VIRTUAL,WHILE,XOR,YEAR_MONTH,"
-                + "ZEROFILL";
+                + "MOD,MODIFIES,NO_WRITE_TO_BINLOG,OPTIMIZE,OPTIMIZER_COSTS,OPTIONALLY,OUT,OUTFILE,PARTITION,PURGE,RANGE,READS,READ_WRITE,REGEXP,RELEASE,"
+                + "RENAME,REPEAT,REPLACE,REQUIRE,RESIGNAL,RETURN,RLIKE,SCHEMAS,SECOND_MICROSECOND,SENSITIVE,SEPARATOR,SHOW,SIGNAL,SPATIAL,SPECIFIC,"
+                + "SQLEXCEPTION,SQLWARNING,SQL_BIG_RESULT,SQL_CALC_FOUND_ROWS,SQL_SMALL_RESULT,SSL,STARTING,STORED,STRAIGHT_JOIN,TERMINATED,TINYBLOB,TINYINT,"
+                + "TINYTEXT,TRIGGER,UNDO,UNLOCK,UNSIGNED,USE,UTC_DATE,UTC_TIME,UTC_TIMESTAMP,VARBINARY,VARCHARACTER,VIRTUAL,WHILE,XOR,YEAR_MONTH,ZEROFILL";
         assertEquals("MySQL keywords don't match expected.", mysqlKeywords, this.conn.getMetaData().getSQLKeywords());
     }
 
@@ -4014,7 +4002,7 @@ public class MetaDataRegressionTest extends BaseTestCase {
             createDatabase(testDb2);
 
             // 1. Check if getProcedures() and getProcedureColumns() aren't returning more results than expected (as per reported bug).
-            createFunction(testDb1 + ".testBug19803348_f", "(d INT) RETURNS INT BEGIN RETURN d; END");
+            createFunction(testDb1 + ".testBug19803348_f", "(d INT) RETURNS INT DETERMINISTIC BEGIN RETURN d; END");
             createProcedure(testDb1 + ".testBug19803348_p", "(d int) BEGIN SELECT d; END");
 
             this.rs = dbmd.getProcedures(null, null, "testBug19803348_%");
@@ -4045,9 +4033,9 @@ public class MetaDataRegressionTest extends BaseTestCase {
             dropProcedure(testDb1 + ".testBug19803348_p");
 
             // 2. Check if the results from getProcedures() and getProcedureColumns() are in the right order (secondary bug).
-            createFunction(testDb1 + ".testBug19803348_B_f", "(d INT) RETURNS INT BEGIN RETURN d; END");
+            createFunction(testDb1 + ".testBug19803348_B_f", "(d INT) RETURNS INT DETERMINISTIC BEGIN RETURN d; END");
             createProcedure(testDb1 + ".testBug19803348_B_p", "(d int) BEGIN SELECT d; END");
-            createFunction(testDb2 + ".testBug19803348_A_f", "(d INT) RETURNS INT BEGIN RETURN d; END");
+            createFunction(testDb2 + ".testBug19803348_A_f", "(d INT) RETURNS INT DETERMINISTIC BEGIN RETURN d; END");
             createProcedure(testDb2 + ".testBug19803348_A_p", "(d int) BEGIN SELECT d; END");
 
             this.rs = dbmd.getProcedures(null, null, "testBug19803348_%");
@@ -4108,9 +4096,11 @@ public class MetaDataRegressionTest extends BaseTestCase {
      *             if the test fails.
      */
     public void testBug20727196() throws Exception {
-        createFunction("testBug20727196_f1", "(p ENUM ('Yes', 'No')) RETURNS VARCHAR(10) BEGIN RETURN IF(p='Yes', 'Yay!', if(p='No', 'Ney!', 'What?')); END");
-        createFunction("testBug20727196_f2", "(p CHAR(1)) RETURNS ENUM ('Yes', 'No') BEGIN RETURN IF(p='y', 'Yes', if(p='n', 'No', '?')); END");
-        createFunction("testBug20727196_f3", "(p ENUM ('Yes', 'No')) RETURNS ENUM ('Yes', 'No') BEGIN RETURN IF(p='Yes', 'Yes', if(p='No', 'No', '?')); END");
+        createFunction("testBug20727196_f1",
+                "(p ENUM ('Yes', 'No')) RETURNS VARCHAR(10) DETERMINISTIC BEGIN RETURN IF(p='Yes', 'Yay!', if(p='No', 'Ney!', 'What?')); END");
+        createFunction("testBug20727196_f2", "(p CHAR(1)) RETURNS ENUM ('Yes', 'No') DETERMINISTIC BEGIN RETURN IF(p='y', 'Yes', if(p='n', 'No', '?')); END");
+        createFunction("testBug20727196_f3",
+                "(p ENUM ('Yes', 'No')) RETURNS ENUM ('Yes', 'No') DETERMINISTIC BEGIN RETURN IF(p='Yes', 'Yes', if(p='No', 'No', '?')); END");
         createProcedure("testBug20727196_p1", "(p ENUM ('Yes', 'No')) BEGIN SELECT IF(p='Yes', 'Yay!', if(p='No', 'Ney!', 'What?')); END");
 
         for (String connProps : new String[] { "useInformationSchema=false", "useInformationSchema=true" }) {
@@ -4165,5 +4155,27 @@ public class MetaDataRegressionTest extends BaseTestCase {
                 }
             }
         }
+    }
+
+    /**
+     * Tests fix for BUG#76187 (20675539), getTypeInfo report maximum precision of 255 for varchar.
+     * 
+     * @throws Exception
+     *             if the test fails.
+     */
+    public void testBug76187() throws Exception {
+
+        DatabaseMetaData meta = this.conn.getMetaData();
+        this.rs = meta.getTypeInfo();
+        while (this.rs.next()) {
+            if (this.rs.getString("TYPE_NAME").equals("VARCHAR")) {
+                if (versionMeetsMinimum(5, 0, 3)) {
+                    assertEquals(65535, this.rs.getInt("PRECISION"));
+                } else {
+                    assertEquals(255, this.rs.getInt("PRECISION"));
+                }
+            }
+        }
+
     }
 }

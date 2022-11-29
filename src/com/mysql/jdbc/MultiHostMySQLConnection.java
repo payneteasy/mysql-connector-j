@@ -4,7 +4,7 @@
   The MySQL Connector/J is licensed under the terms of the GPLv2
   <http://www.gnu.org/licenses/old-licenses/gpl-2.0.html>, like most MySQL Connectors.
   There are special exceptions to the terms and conditions of the GPLv2 as it is applied to
-  this software, see the FLOSS License Exception
+  this software, see the FOSS License Exception
   <http://www.mysql.com/about/legal/licensing/foss-exception.html>.
 
   This program is free software; you can redistribute it and/or modify it under the terms
@@ -787,6 +787,10 @@ public class MultiHostMySQLConnection implements MySQLConnection {
         return getActiveMySQLConnection().getUseLegacyDatetimeCode();
     }
 
+    public boolean getSendFractionalSeconds() {
+        return getActiveMySQLConnection().getSendFractionalSeconds();
+    }
+
     public boolean getUseLocalSessionState() {
         return getActiveMySQLConnection().getUseLocalSessionState();
     }
@@ -1529,6 +1533,10 @@ public class MultiHostMySQLConnection implements MySQLConnection {
 
     public void setUseLegacyDatetimeCode(boolean flag) {
         getActiveMySQLConnection().setUseLegacyDatetimeCode(flag);
+    }
+
+    public void setSendFractionalSeconds(boolean flag) {
+        getActiveMySQLConnection().setSendFractionalSeconds(flag);
     }
 
     public void setUseLocalSessionState(boolean flag) {
@@ -2410,5 +2418,13 @@ public class MultiHostMySQLConnection implements MySQLConnection {
 
     public void setEnabledSSLCipherSuites(String cipherSuites) {
         getActiveMySQLConnection().setEnabledSSLCipherSuites(cipherSuites);
+    }
+
+    public boolean getEnableEscapeProcessing() {
+        return getActiveMySQLConnection().getEnableEscapeProcessing();
+    }
+
+    public void setEnableEscapeProcessing(boolean flag) {
+        getActiveMySQLConnection().setEnableEscapeProcessing(flag);
     }
 }

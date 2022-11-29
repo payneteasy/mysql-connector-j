@@ -4,7 +4,7 @@
   The MySQL Connector/J is licensed under the terms of the GPLv2
   <http://www.gnu.org/licenses/old-licenses/gpl-2.0.html>, like most MySQL Connectors.
   There are special exceptions to the terms and conditions of the GPLv2 as it is applied to
-  this software, see the FLOSS License Exception
+  this software, see the FOSS License Exception
   <http://www.mysql.com/about/legal/licensing/foss-exception.html>.
 
   This program is free software; you can redistribute it and/or modify it under the terms
@@ -676,13 +676,13 @@ public class DatabaseMetaData implements java.sql.DatabaseMetaData {
             "LOCALTIME", "LOCALTIMESTAMP", "LOCK", "LONG", "LONGBLOB", "LONGTEXT", "LOOP", "LOW_PRIORITY", "MASTER_BIND", "MASTER_SSL_VERIFY_SERVER_CERT",
             "MATCH", "MAXVALUE", "MEDIUMBLOB", "MEDIUMINT", "MEDIUMTEXT", "MIDDLEINT", "MINUTE_MICROSECOND", "MINUTE_SECOND", "MOD", "MODIFIES", "NATURAL",
             "NOT", "NO_WRITE_TO_BINLOG", "NULL", "NUMERIC", "ON", "OPTIMIZE", "OPTIMIZER_COSTS", "OPTION", "OPTIONALLY", "OR", "ORDER", "OUT", "OUTER",
-            "OUTFILE", "PARSE_GCOL_EXPR", "PARTITION", "PRECISION", "PRIMARY", "PROCEDURE", "PURGE", "RANGE", "READ", "READS", "READ_WRITE", "REAL",
-            "REFERENCES", "REGEXP", "RELEASE", "RENAME", "REPEAT", "REPLACE", "REQUIRE", "RESIGNAL", "RESTRICT", "RETURN", "REVOKE", "RIGHT", "RLIKE",
-            "SCHEMA", "SCHEMAS", "SECOND_MICROSECOND", "SELECT", "SENSITIVE", "SEPARATOR", "SET", "SHOW", "SIGNAL", "SMALLINT", "SPATIAL", "SPECIFIC", "SQL",
-            "SQLEXCEPTION", "SQLSTATE", "SQLWARNING", "SQL_BIG_RESULT", "SQL_CALC_FOUND_ROWS", "SQL_SMALL_RESULT", "SSL", "STARTING", "STORED",
-            "STRAIGHT_JOIN", "TABLE", "TERMINATED", "THEN", "TINYBLOB", "TINYINT", "TINYTEXT", "TO", "TRAILING", "TRIGGER", "TRUE", "UNDO", "UNION", "UNIQUE",
-            "UNLOCK", "UNSIGNED", "UPDATE", "USAGE", "USE", "USING", "UTC_DATE", "UTC_TIME", "UTC_TIMESTAMP", "VALUES", "VARBINARY", "VARCHAR", "VARCHARACTER",
-            "VARYING", "VIRTUAL", "WHEN", "WHERE", "WHILE", "WITH", "WRITE", "XOR", "YEAR_MONTH", "ZEROFILL" };
+            "OUTFILE", "PARTITION", "PRECISION", "PRIMARY", "PROCEDURE", "PURGE", "RANGE", "READ", "READS", "READ_WRITE", "REAL", "REFERENCES", "REGEXP",
+            "RELEASE", "RENAME", "REPEAT", "REPLACE", "REQUIRE", "RESIGNAL", "RESTRICT", "RETURN", "REVOKE", "RIGHT", "RLIKE", "SCHEMA", "SCHEMAS",
+            "SECOND_MICROSECOND", "SELECT", "SENSITIVE", "SEPARATOR", "SET", "SHOW", "SIGNAL", "SMALLINT", "SPATIAL", "SPECIFIC", "SQL", "SQLEXCEPTION",
+            "SQLSTATE", "SQLWARNING", "SQL_BIG_RESULT", "SQL_CALC_FOUND_ROWS", "SQL_SMALL_RESULT", "SSL", "STARTING", "STORED", "STRAIGHT_JOIN", "TABLE",
+            "TERMINATED", "THEN", "TINYBLOB", "TINYINT", "TINYTEXT", "TO", "TRAILING", "TRIGGER", "TRUE", "UNDO", "UNION", "UNIQUE", "UNLOCK", "UNSIGNED",
+            "UPDATE", "USAGE", "USE", "USING", "UTC_DATE", "UTC_TIME", "UTC_TIMESTAMP", "VALUES", "VARBINARY", "VARCHAR", "VARCHARACTER", "VARYING", "VIRTUAL",
+            "WHEN", "WHERE", "WHILE", "WITH", "WRITE", "XOR", "YEAR_MONTH", "ZEROFILL" };
 
     // SQL:92 reserved words from 'ANSI X3.135-1992, January 4, 1993'
     private static final String[] SQL92_KEYWORDS = new String[] { "ABSOLUTE", "ACTION", "ADD", "ALL", "ALLOCATE", "ALTER", "AND", "ANY", "ARE", "AS", "ASC",
@@ -2514,8 +2514,8 @@ public class DatabaseMetaData implements java.sql.DatabaseMetaData {
 
                                 if (extra != null) {
                                     rowVal[22] = s2b(StringUtils.indexOfIgnoreCase(extra, "auto_increment") != -1 ? "YES" : "NO");
+                                    rowVal[23] = s2b(StringUtils.indexOfIgnoreCase(extra, "generated") != -1 ? "YES" : "NO");
                                 }
-                                rowVal[23] = s2b("");
 
                                 rows.add(new ByteArrayRow(rowVal, getExceptionInterceptor()));
                             }
@@ -3277,10 +3277,10 @@ public class DatabaseMetaData implements java.sql.DatabaseMetaData {
      * <li><B>COLUMN_NAME</B> String => column name; null when TYPE is tableIndexStatistic</li>
      * <li><B>ASC_OR_DESC</B> String => column sort sequence, "A" => ascending, "D" => descending, may be null if sort sequence is not supported; null when TYPE
      * is tableIndexStatistic</li>
-     * <li><B>CARDINALITY</B> int => When TYPE is tableIndexStatisic then this is the number of rows in the table; otherwise it is the number of unique values
-     * in the index.</li>
-     * <li><B>PAGES</B> int => When TYPE is tableIndexStatisic then this is the number of pages used for the table, otherwise it is the number of pages used for
-     * the current index.</li>
+     * <li><B>CARDINALITY</B> int/long => When TYPE is tableIndexStatisic then this is the number of rows in the table; otherwise it is the number of unique
+     * values in the index.</li>
+     * <li><B>PAGES</B> int/long => When TYPE is tableIndexStatisic then this is the number of pages used for the table, otherwise it is the number of pages
+     * used for the current index.</li>
      * <li><B>FILTER_CONDITION</B> String => Filter condition, if any. (may be null)</li>
      * </ol>
      * </p>
@@ -3356,10 +3356,10 @@ public class DatabaseMetaData implements java.sql.DatabaseMetaData {
                             row[8] = results.getBytes("Column_name");
                             row[9] = results.getBytes("Collation");
 
-                            // Cardinality can be much larger than Integer's range, so we clamp it to conform to the API
                             long cardinality = results.getLong("Cardinality");
 
-                            if (cardinality > Integer.MAX_VALUE) {
+                            // Prior to JDBC 4.2, cardinality can be much larger than Integer's range, so we clamp it to conform to the API
+                            if (!Util.isJdbc42() && cardinality > Integer.MAX_VALUE) {
                                 cardinality = Integer.MAX_VALUE;
                             }
 
@@ -3419,8 +3419,13 @@ public class DatabaseMetaData implements java.sql.DatabaseMetaData {
         fields[7] = new Field("", "ORDINAL_POSITION", Types.SMALLINT, 5);
         fields[8] = new Field("", "COLUMN_NAME", Types.CHAR, 32);
         fields[9] = new Field("", "ASC_OR_DESC", Types.CHAR, 1);
-        fields[10] = new Field("", "CARDINALITY", Types.INTEGER, 20);
-        fields[11] = new Field("", "PAGES", Types.INTEGER, 10);
+        if (Util.isJdbc42()) {
+            fields[10] = new Field("", "CARDINALITY", Types.BIGINT, 20);
+            fields[11] = new Field("", "PAGES", Types.BIGINT, 20);
+        } else {
+            fields[10] = new Field("", "CARDINALITY", Types.INTEGER, 20);
+            fields[11] = new Field("", "PAGES", Types.INTEGER, 10);
+        }
         fields[12] = new Field("", "FILTER_CONDITION", Types.CHAR, 32);
         return fields;
     }
@@ -5972,7 +5977,7 @@ public class DatabaseMetaData implements java.sql.DatabaseMetaData {
         rowVal[1] = Integer.toString(java.sql.Types.VARCHAR).getBytes();
 
         // JDBC Data type
-        rowVal[2] = s2b("255"); // Precision
+        rowVal[2] = s2b(this.conn.versionMeetsMinimum(5, 0, 3) ? "65535" : "255"); // Precision
         rowVal[3] = s2b("'"); // Literal Prefix
         rowVal[4] = s2b("'"); // Literal Suffix
         rowVal[5] = s2b("(M)"); // Create Params

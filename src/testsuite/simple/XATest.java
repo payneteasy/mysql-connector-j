@@ -4,7 +4,7 @@
   The MySQL Connector/J is licensed under the terms of the GPLv2
   <http://www.gnu.org/licenses/old-licenses/gpl-2.0.html>, like most MySQL Connectors.
   There are special exceptions to the terms and conditions of the GPLv2 as it is applied to
-  this software, see the FLOSS License Exception
+  this software, see the FOSS License Exception
   <http://www.mysql.com/about/legal/licensing/foss-exception.html>.
 
   This program is free software; you can redistribute it and/or modify it under the terms
@@ -270,8 +270,7 @@ public class XATest extends BaseTestCase {
      *             if the testcase fails
      */
     public void testLocalTransaction() throws Exception {
-
-        if (!versionMeetsMinimum(5, 0) || isRunningOnJdk131()) {
+        if (!versionMeetsMinimum(5, 0)) {
             return;
         }
 
@@ -376,7 +375,7 @@ public class XATest extends BaseTestCase {
     }
 
     public void testSuspendableTx() throws Exception {
-        if (!versionMeetsMinimum(5, 0) || isRunningOnJdk131()) {
+        if (!versionMeetsMinimum(5, 0)) {
             return;
         }
 

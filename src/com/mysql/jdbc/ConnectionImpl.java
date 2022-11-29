@@ -4,7 +4,7 @@
   The MySQL Connector/J is licensed under the terms of the GPLv2
   <http://www.gnu.org/licenses/old-licenses/gpl-2.0.html>, like most MySQL Connectors.
   There are special exceptions to the terms and conditions of the GPLv2 as it is applied to
-  this software, see the FLOSS License Exception
+  this software, see the FOSS License Exception
   <http://www.mysql.com/about/legal/licensing/foss-exception.html>.
 
   This program is free software; you can redistribute it and/or modify it under the terms
@@ -36,6 +36,7 @@ import java.nio.charset.CharsetEncoder;
 import java.sql.Blob;
 import java.sql.DatabaseMetaData;
 import java.sql.ResultSet;
+import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.sql.SQLPermission;
 import java.sql.SQLWarning;
@@ -782,7 +783,7 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements MySQLCon
         // We store this per-connection, due to static synchronization issues in Java's built-in TimeZone class...
         this.defaultTimeZone = TimeUtil.getDefaultTimeZone(getCacheDefaultTimezone());
 
-        this.isClientTzUTC = "GMT".equalsIgnoreCase(this.defaultTimeZone.getID());
+        this.isClientTzUTC = !this.defaultTimeZone.useDaylightTime() && this.defaultTimeZone.getRawOffset() == 0;
 
         if (getUseUsageAdvisor()) {
             this.pointOfOrigin = LogUtils.findCallingClassAndMethod(new Throwable());
@@ -1357,12 +1358,16 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements MySQLCon
      */
     public void abortInternal() throws SQLException {
         if (this.io != null) {
+            // checking this.io != null isn't enough if connection is used concurrently (the usual situation
+            // with application servers which have additional thread management), this.io can become null
+            // at any moment after this check, causing a race condition and NPEs on next calls;
+            // but we may ignore them because at this stage null this.io means that we successfully closed all resources by other thread.
             try {
                 this.io.forceClose();
+                this.io.releaseResources();
             } catch (Throwable t) {
                 // can't do anything about it, and we're forcibly aborting
             }
-            this.io.releaseResources();
             this.io = null;
         }
 
@@ -2041,7 +2046,7 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements MySQLCon
                         getExceptionInterceptor());
             }
 
-            this.isServerTzUTC = "GMT".equalsIgnoreCase(this.serverTimezoneTZ.getID());
+            this.isServerTzUTC = !this.serverTimezoneTZ.useDaylightTime() && this.serverTimezoneTZ.getRawOffset() == 0;
         }
     }
 
@@ -3830,50 +3835,36 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements MySQLCon
             this.serverVariables = new HashMap<String, String>();
 
             try {
-
-                if (versionMeetsMinimum(5, 0, 3)) {
-
-                    Map<String, String> nameToFieldNameMap = new TreeMap<String, String>();
-                    nameToFieldNameMap.put("auto_increment_increment", "@@session.auto_increment_increment");
-                    nameToFieldNameMap.put("character_set_client", "@@character_set_client");
-                    nameToFieldNameMap.put("character_set_connection", "@@character_set_connection");
-                    nameToFieldNameMap.put("character_set_results", "@@character_set_results");
-                    nameToFieldNameMap.put("character_set_server", "@@character_set_server");
-                    nameToFieldNameMap.put("init_connect", "@@init_connect");
-                    nameToFieldNameMap.put("interactive_timeout", "@@interactive_timeout");
-                    nameToFieldNameMap.put("license", "@@license");
-                    nameToFieldNameMap.put("lower_case_table_names", "@@lower_case_table_names");
-                    nameToFieldNameMap.put("max_allowed_packet", "@@max_allowed_packet");
-                    nameToFieldNameMap.put("net_buffer_length", "@@net_buffer_length");
-                    nameToFieldNameMap.put("net_write_timeout", "@@net_write_timeout");
-                    nameToFieldNameMap.put("query_cache_size", "@@query_cache_size");
-                    nameToFieldNameMap.put("query_cache_type", "@@query_cache_type");
-                    nameToFieldNameMap.put("sql_mode", "@@sql_mode");
-                    nameToFieldNameMap.put("system_time_zone", "@@system_time_zone");
-                    nameToFieldNameMap.put("time_zone", "@@time_zone");
-                    nameToFieldNameMap.put("tx_isolation", "@@tx_isolation");
-                    nameToFieldNameMap.put("wait_timeout", "@@wait_timeout");
+                if (versionMeetsMinimum(5, 1, 0)) {
+                    StringBuilder queryBuf = new StringBuilder(versionComment).append("SELECT");
+                    queryBuf.append("  @@session.auto_increment_increment AS auto_increment_increment");
+                    queryBuf.append(", @@character_set_client AS character_set_client");
+                    queryBuf.append(", @@character_set_connection AS character_set_connection");
+                    queryBuf.append(", @@character_set_results AS character_set_results");
+                    queryBuf.append(", @@character_set_server AS character_set_server");
+                    queryBuf.append(", @@init_connect AS init_connect");
+                    queryBuf.append(", @@interactive_timeout AS interactive_timeout");
                     if (!versionMeetsMinimum(5, 5, 0)) {
-                        nameToFieldNameMap.put("language", "@@language");
+                        queryBuf.append(", @@language AS language");
                     }
-
-                    StringBuilder queryBuf = new StringBuilder(versionComment);
-                    boolean firstEntry = true;
-                    for (String value : nameToFieldNameMap.values()) {
-                        if (firstEntry) {
-                            queryBuf.append("SELECT ");
-                            firstEntry = false;
-                        } else {
-                            queryBuf.append(", ");
-                        }
-                        queryBuf.append(value);
-                    }
+                    queryBuf.append(", @@license AS license");
+                    queryBuf.append(", @@lower_case_table_names AS lower_case_table_names");
+                    queryBuf.append(", @@max_allowed_packet AS max_allowed_packet");
+                    queryBuf.append(", @@net_buffer_length AS net_buffer_length");
+                    queryBuf.append(", @@net_write_timeout AS net_write_timeout");
+                    queryBuf.append(", @@query_cache_size AS query_cache_size");
+                    queryBuf.append(", @@query_cache_type AS query_cache_type");
+                    queryBuf.append(", @@sql_mode AS sql_mode");
+                    queryBuf.append(", @@system_time_zone AS system_time_zone");
+                    queryBuf.append(", @@time_zone AS time_zone");
+                    queryBuf.append(", @@tx_isolation AS tx_isolation");
+                    queryBuf.append(", @@wait_timeout AS wait_timeout");
 
                     results = stmt.executeQuery(queryBuf.toString());
                     if (results.next()) {
-                        int col = 1;
-                        for (String key : nameToFieldNameMap.keySet()) {
-                            this.serverVariables.put(key, results.getString(col++));
+                        ResultSetMetaData rsmd = results.getMetaData();
+                        for (int i = 1; i <= rsmd.getColumnCount(); i++) {
+                            this.serverVariables.put(rsmd.getColumnLabel(i), results.getString(i));
                         }
                     }
                 } else {
@@ -4725,7 +4716,7 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements MySQLCon
                     this.needsPing = this.getReconnectAtTxEnd();
                 }
             } else {
-                throw SQLError.notImplemented();
+                throw SQLError.createSQLFeatureNotSupportedException();
             }
         }
     }
@@ -5064,7 +5055,7 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements MySQLCon
                     closeStatement(stmt);
                 }
             } else {
-                throw SQLError.notImplemented();
+                throw SQLError.createSQLFeatureNotSupportedException();
             }
         }
     }

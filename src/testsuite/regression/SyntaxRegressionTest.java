@@ -1,10 +1,10 @@
 /*
-  Copyright (c) 2002, 2014, Oracle and/or its affiliates. All rights reserved.
+  Copyright (c) 2002, 2015, Oracle and/or its affiliates. All rights reserved.
 
   The MySQL Connector/J is licensed under the terms of the GPLv2
   <http://www.gnu.org/licenses/old-licenses/gpl-2.0.html>, like most MySQL Connectors.
   There are special exceptions to the terms and conditions of the GPLv2 as it is applied to
-  this software, see the FLOSS License Exception
+  this software, see the FOSS License Exception
   <http://www.mysql.com/about/legal/licensing/foss-exception.html>.
 
   This program is free software; you can redistribute it and/or modify it under the terms
@@ -30,8 +30,10 @@ import java.io.IOException;
 import java.sql.CallableStatement;
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.sql.Types;
 import java.util.Properties;
 import java.util.concurrent.Callable;
 
@@ -347,8 +349,8 @@ public class SyntaxRegressionTest extends BaseTestCase {
                 this.pstmt = this.conn.prepareStatement("ALTER IGNORE TABLE testExchangePartition1 "
                         + "EXCHANGE PARTITION p1 WITH TABLE testExchangePartition2");
             }
-            assertEquals(Util.isJdbc4() ? Class.forName("com.mysql.jdbc.JDBC4PreparedStatement") : com.mysql.jdbc.PreparedStatement.class,
-                    this.pstmt.getClass());
+            assertEquals(Util.isJdbc4() ? Class.forName(Util.isJdbc42() ? "com.mysql.jdbc.JDBC42PreparedStatement" : "com.mysql.jdbc.JDBC4PreparedStatement")
+                    : com.mysql.jdbc.PreparedStatement.class, this.pstmt.getClass());
             this.pstmt.executeUpdate();
 
             Connection testConn = null;
@@ -361,8 +363,9 @@ public class SyntaxRegressionTest extends BaseTestCase {
                             + "EXCHANGE PARTITION p1 WITH TABLE testExchangePartition2");
 
                 }
-                assertEquals(Util.isJdbc4() ? Class.forName("com.mysql.jdbc.JDBC4ServerPreparedStatement") : com.mysql.jdbc.ServerPreparedStatement.class,
-                        this.pstmt.getClass());
+                assertEquals(
+                        Util.isJdbc4() ? Class.forName(Util.isJdbc42() ? "com.mysql.jdbc.JDBC42ServerPreparedStatement"
+                                : "com.mysql.jdbc.JDBC4ServerPreparedStatement") : com.mysql.jdbc.ServerPreparedStatement.class, this.pstmt.getClass());
                 this.pstmt.executeUpdate();
             } finally {
                 if (testConn != null) {
@@ -914,5 +917,295 @@ public class SyntaxRegressionTest extends BaseTestCase {
                 return null;
             }
         });
+    }
+
+    /**
+     * WL#7909 - Server side JSON functions
+     * 
+     * Test support for data type JSON.
+     * 
+     * New JSON functions added in MySQL 5.7.8:
+     * - JSON_APPEND(), Append data to JSON document (only in 5.7.8)
+     * - JSON_ARRAY_APPEND(), Append data to JSON document (added in 5.7.9+)
+     * - JSON_ARRAY_INSERT(), Insert into JSON array
+     * - JSON_ARRAY(), Create JSON array
+     * - JSON_CONTAINS_PATH(), Whether JSON document contains any data at path
+     * - JSON_CONTAINS(), Whether JSON document contains specific object at path
+     * - JSON_DEPTH(), Maximum depth of JSON document
+     * - JSON_EXTRACT(), Return data from JSON document
+     * - JSON_INSERT(), Insert data into JSON document
+     * - JSON_KEYS(), Array of keys from JSON document
+     * - JSON_LENGTH(), Number of elements in JSON document
+     * - JSON_MERGE(), Merge JSON documents
+     * - JSON_OBJECT(), Create JSON object
+     * - JSON_QUOTE(), Quote JSON document
+     * - JSON_REMOVE(), Remove data from JSON document
+     * - JSON_REPLACE(), Replace values in JSON document
+     * - JSON_SEARCH(), Path to value within JSON document
+     * - JSON_SET(), Insert data into JSON document
+     * - JSON_TYPE(), Type of JSON value
+     * - JSON_UNQUOTE(), Unquote JSON value
+     * - JSON_VALID(), Whether JSON value is valid
+     */
+    public void testJsonType() throws Exception {
+        if (!versionMeetsMinimum(5, 7, 8)) {
+            return;
+        }
+
+        createTable("testJsonType", "(id INT PRIMARY KEY, jsonDoc JSON)");
+        assertEquals(1, this.stmt.executeUpdate("INSERT INTO testJsonType VALUES (1, '{\"key1\": \"value1\"}')"));
+
+        // Plain statement.
+        this.rs = this.stmt.executeQuery("SELECT * FROM testJsonType");
+        assertEquals("JSON", this.rs.getMetaData().getColumnTypeName(2));
+        assertTrue(this.rs.next());
+        assertEquals("{\"key1\": \"value1\"}", this.rs.getString(2));
+        assertEquals("{\"key1\": \"value1\"}", this.rs.getObject(2));
+        assertFalse(this.rs.next());
+
+        // Updatable ResultSet.
+        Statement testStmt = this.conn.createStatement(ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_UPDATABLE);
+        this.rs = testStmt.executeQuery("SELECT * FROM testJsonType");
+        assertTrue(this.rs.next());
+        this.rs.updateString(2, "{\"key1\": \"value1\", \"key2\": \"value2\"}");
+        this.rs.updateRow();
+
+        this.rs = testStmt.executeQuery("SELECT * FROM testJsonType");
+        assertEquals("JSON", this.rs.getMetaData().getColumnTypeName(2));
+        assertTrue(this.rs.next());
+        assertEquals("{\"key1\": \"value1\", \"key2\": \"value2\"}", this.rs.getString(2));
+        assertEquals("{\"key1\": \"value1\", \"key2\": \"value2\"}", this.rs.getObject(2));
+        assertFalse(this.rs.next());
+
+        // PreparedStatement.
+        this.pstmt = this.conn.prepareStatement("SELECT * FROM testJsonType");
+        this.rs = this.pstmt.executeQuery();
+        assertEquals("JSON", this.rs.getMetaData().getColumnTypeName(2));
+        assertTrue(this.rs.next());
+        assertEquals("{\"key1\": \"value1\", \"key2\": \"value2\"}", this.rs.getString(2));
+        assertEquals("{\"key1\": \"value1\", \"key2\": \"value2\"}", this.rs.getObject(2));
+        assertFalse(this.rs.next());
+
+        // ServerPreparedStatement.
+        Connection testConn = getConnectionWithProps("useServerPrepStmts=true");
+        this.pstmt = testConn.prepareStatement("SELECT * FROM testJsonType");
+        this.rs = this.pstmt.executeQuery();
+        assertEquals("JSON", this.rs.getMetaData().getColumnTypeName(2));
+        assertTrue(this.rs.next());
+        assertEquals("{\"key1\": \"value1\", \"key2\": \"value2\"}", this.rs.getString(2));
+        assertEquals("{\"key1\": \"value1\", \"key2\": \"value2\"}", this.rs.getObject(2));
+        assertFalse(this.rs.next());
+        testConn.close();
+
+        // CallableStatement.
+        createProcedure("testJsonTypeProc", "(OUT jsonDoc JSON) SELECT t.jsonDoc INTO jsonDoc FROM testJsonType t");
+        CallableStatement testCstmt = this.conn.prepareCall("{CALL testJsonTypeProc(?)}");
+        testCstmt.registerOutParameter(1, Types.CHAR);
+        testCstmt.execute();
+        assertEquals("{\"key1\": \"value1\", \"key2\": \"value2\"}", testCstmt.getString(1));
+        assertEquals("{\"key1\": \"value1\", \"key2\": \"value2\"}", testCstmt.getObject(1));
+
+        // JSON functions.
+        testJsonTypeCheckFunction(versionMeetsMinimum(5, 7, 9) ? "SELECT JSON_ARRAY_APPEND('[1]', '$', 2)" : "SELECT JSON_APPEND('[1]', '$', 2)", "[1, 2]");
+        testJsonTypeCheckFunction("SELECT JSON_ARRAY_INSERT('[2]', '$[0]', 1)", "[1, 2]");
+        testJsonTypeCheckFunction("SELECT JSON_ARRAY(1, 2)", "[1, 2]");
+        testJsonTypeCheckFunction("SELECT JSON_CONTAINS_PATH('{\"a\": 1}', 'one', '$.a')", "1");
+        testJsonTypeCheckFunction("SELECT JSON_CONTAINS('{\"a\": 1}', '1', '$.a')", "1");
+        testJsonTypeCheckFunction("SELECT JSON_DEPTH('{\"a\": 1}')", "2");
+        testJsonTypeCheckFunction("SELECT JSON_EXTRACT('[1, 2]', '$[0]')", "1");
+        testJsonTypeCheckFunction("SELECT JSON_INSERT('[1]', '$[1]', 2)", "[1, 2]");
+        testJsonTypeCheckFunction("SELECT JSON_KEYS('{\"a\": 1}')", "[\"a\"]");
+        testJsonTypeCheckFunction("SELECT JSON_LENGTH('{\"a\": 1}')", "1");
+        testJsonTypeCheckFunction("SELECT JSON_MERGE('[1]', '[2]')", "[1, 2]");
+        testJsonTypeCheckFunction("SELECT JSON_OBJECT('a', 1)", "{\"a\": 1}");
+        testJsonTypeCheckFunction("SELECT JSON_QUOTE('[1]')", "\"[1]\"");
+        testJsonTypeCheckFunction("SELECT JSON_REMOVE('[1, 2]', '$[1]')", "[1]");
+        testJsonTypeCheckFunction("SELECT JSON_REPLACE('[0]', '$[0]', 1)", "[1]");
+        testJsonTypeCheckFunction("SELECT JSON_SEARCH('{\"a\": \"1\"}', 'one', '1')", "\"$.a\"");
+        testJsonTypeCheckFunction("SELECT JSON_SET('[1, 1]', '$[1]', 2)", "[1, 2]");
+        testJsonTypeCheckFunction("SELECT JSON_TYPE('[]')", "ARRAY");
+        testJsonTypeCheckFunction("SELECT JSON_UNQUOTE('\"[1]\"')", "[1]");
+        testJsonTypeCheckFunction("SELECT JSON_VALID('{\"a\": 1}')", "1");
+    }
+
+    private void testJsonTypeCheckFunction(String sql, String expectedResult) throws Exception {
+        this.rs = this.stmt.executeQuery(sql);
+        assertTrue(this.rs.next());
+        assertEquals(expectedResult, this.rs.getString(1));
+    }
+
+    /**
+     * WL#8016 - Parser for optimizer hints.
+     * 
+     * Test syntax for optimizer hints.
+     * 
+     * New optimizer hints feature added in MySQL 5.7.7. Hints are permitted in these contexts:
+     * At the beginning of DML statements
+     * - SELECT /*+ ... *&#47 ...
+     * - INSERT /*+ ... *&#47 ...
+     * - REPLACE /*+ ... *&#47 ...
+     * - UPDATE /*+ ... *&#47 ...
+     * - DELETE /*+ ... *&#47 ...
+     * At the beginning of query blocks:
+     * - (SELECT /*+ ... *&#47 ... )
+     * - (SELECT ... ) UNION (SELECT /*+ ... *&#47 ... )
+     * - (SELECT /*+ ... *&#47 ... ) UNION (SELECT /*+ ... *&#47 ... )
+     * - UPDATE ... WHERE x IN (SELECT /*+ ... *&#47 ...)
+     * - INSERT ... SELECT /*+ ... *&#47 ...
+     * In hintable statements prefaced by EXPLAIN. For example:
+     * - EXPLAIN SELECT /*+ ... *&#47 ...
+     * - EXPLAIN UPDATE ... WHERE x IN (SELECT /*+ ... *&#47 ...)
+     */
+    public void testHints() throws Exception {
+        if (!versionMeetsMinimum(5, 7, 7)) {
+            return;
+        }
+
+        /*
+         * Test hints syntax variations.
+         */
+        // Valid hints.
+        testHintsSyntax("SELECT /*+ max_execution_time(100) */ SLEEP(0.5)", true, false);
+        testHintsSyntax("SELECT/*+ max_execution_time(100) */SLEEP(0.5)", true, false);
+        testHintsSyntax("SELECT /*+ max_execution_time(100) */ SLEEP(0.5) /*+ wrong location, just comments */", true, false);
+        testHintsSyntax("SELECT /*+ max_execution_time(100) *//* comment */ SLEEP(0.5)", true, false);
+
+        // Invalid hints.
+        testHintsSyntax("SELECT /*+ max_execution_time *//*+ (100) */ SLEEP(0.5)", false, true);
+        testHintsSyntax("SELECT /*+! max_execution_time (100) */ SLEEP(0.5)", false, true);
+
+        // Valid and invalid hints.
+        testHintsSyntax("SELECT /*+ max_execution_time (100) bad_hint */ SLEEP(0.5)", true, true);
+
+        // No hints.
+        testHintsSyntax("/*+ max_execution_time(100) */SELECT SLEEP(0.5)", false, false);
+        testHintsSyntax("SELECT SLEEP(0.5) /*+ max_execution_time(100) */", false, false);
+        testHintsSyntax("SELECT /* + max_execution_time(100) */ SLEEP(0.5)", false, false);
+        testHintsSyntax("SELECT /* comment *//*+ max_execution_time(100) */ SLEEP(0.5)", false, false);
+        testHintsSyntax("SELECT /*!+1-1, */ 1", false, false);
+
+        /*
+         * Test hints in different query types using Statements.
+         */
+        createTable("testHints", "(id INT PRIMARY KEY, txt CHAR(2))");
+
+        // Hints in single query.
+        assertEquals(1, this.stmt.executeUpdate("INSERT /*+ mrr(testHints) */ INTO testHints VALUES (1, 'a')"));
+        assertNull(this.stmt.getWarnings());
+        assertEquals(2, this.stmt.executeUpdate("REPLACE /*+ mrr(testHints) */ INTO testHints VALUES (1, 'A')"));
+        assertNull(this.stmt.getWarnings());
+        assertEquals(1, this.stmt.executeUpdate("UPDATE /*+ mrr(testHints) */ testHints SET txt = 'Aa'"));
+        assertNull(this.stmt.getWarnings());
+        this.rs = this.stmt.executeQuery("SELECT /*+ max_execution_time(100) */ * FROM testHints");
+        assertNull(this.stmt.getWarnings());
+        assertTrue(this.rs.next());
+        assertEquals(1, this.rs.getInt(1));
+        assertEquals("Aa", this.rs.getString(2));
+        assertFalse(this.rs.next());
+        assertEquals(1, this.stmt.executeUpdate("DELETE /*+ mrr(testHints) */ FROM testHints"));
+        assertNull(this.stmt.getWarnings());
+
+        // Hints in sub-query block.
+        assertEquals(1, this.stmt.executeUpdate("INSERT INTO testHints (SELECT /*+ qb_name(dummy) */ 2, 'b')"));
+        assertNull(this.stmt.getWarnings());
+        assertEquals(2, this.stmt.executeUpdate("REPLACE INTO testHints (SELECT /*+ qb_name(dummy) */ 2, 'B')"));
+        assertNull(this.stmt.getWarnings());
+        assertEquals(1, this.stmt.executeUpdate("UPDATE testHints SET txt = 'Bb' WHERE id IN (SELECT /*+ qb_name(dummy) */ 2)"));
+        assertNull(this.stmt.getWarnings());
+        this.rs = this.stmt.executeQuery("SELECT /*+ max_execution_time(100) */ 1, 'Aa' UNION SELECT /*+ qb_name(dummy) */ * FROM testHints");
+        assertNull(this.stmt.getWarnings());
+        assertTrue(this.rs.next());
+        assertEquals(1, this.rs.getInt(1));
+        assertEquals("Aa", this.rs.getString(2));
+        assertTrue(this.rs.next());
+        assertEquals(2, this.rs.getInt(1));
+        assertEquals("Bb", this.rs.getString(2));
+        assertFalse(this.rs.next());
+        assertEquals(1, this.stmt.executeUpdate("DELETE FROM testHints WHERE id IN (SELECT /*+ qb_name(dummy) */ 2)"));
+        assertNull(this.stmt.getWarnings());
+
+        /*
+         * Test hints in different query types using PreparedStatements.
+         */
+        for (String connProps : new String[] { "useServerPrepStmts=false", "useServerPrepStmts=true" }) {
+            Connection testConn = null;
+            testConn = getConnectionWithProps(connProps);
+
+            // Hints in single query.
+            this.pstmt = testConn.prepareStatement("INSERT /*+ mrr(testHints) */ INTO testHints VALUES (?, ?)");
+            this.pstmt.setInt(1, 1);
+            this.pstmt.setString(2, "a");
+            assertEquals(1, this.pstmt.executeUpdate());
+            assertNull(this.pstmt.getWarnings());
+            this.pstmt = testConn.prepareStatement("REPLACE /*+ mrr(testHints) */ INTO testHints VALUES (?, ?)");
+            this.pstmt.setInt(1, 1);
+            this.pstmt.setString(2, "A");
+            assertEquals(2, this.pstmt.executeUpdate());
+            assertNull(this.pstmt.getWarnings());
+            this.pstmt = testConn.prepareStatement("UPDATE /*+ mrr(testHints) */ testHints SET txt = ?");
+            this.pstmt.setString(1, "Aa");
+            assertEquals(1, this.pstmt.executeUpdate());
+            assertNull(this.pstmt.getWarnings());
+            this.pstmt = testConn.prepareStatement("SELECT /*+ max_execution_time(100) */ * FROM testHints WHERE id = ?");
+            this.pstmt.setInt(1, 1);
+            this.rs = this.pstmt.executeQuery();
+            assertNull(this.pstmt.getWarnings());
+            assertTrue(this.rs.next());
+            assertEquals(1, this.rs.getInt(1));
+            assertEquals("Aa", this.rs.getString(2));
+            assertFalse(this.rs.next());
+            this.pstmt = testConn.prepareStatement("DELETE /*+ mrr(testHints) */ FROM testHints WHERE id = ?");
+            this.pstmt.setInt(1, 1);
+            assertEquals(1, this.pstmt.executeUpdate());
+            assertNull(this.pstmt.getWarnings());
+
+            // Hints in sub-query block.
+            this.pstmt = testConn.prepareStatement("INSERT INTO testHints (SELECT /*+ qb_name(dummy) */ ?, ?)");
+            this.pstmt.setInt(1, 2);
+            this.pstmt.setString(2, "b");
+            assertEquals(1, this.pstmt.executeUpdate());
+            assertNull(this.pstmt.getWarnings());
+            this.pstmt = testConn.prepareStatement("REPLACE INTO testHints (SELECT /*+ qb_name(dummy) */ ?, ?)");
+            this.pstmt.setInt(1, 2);
+            this.pstmt.setString(2, "B");
+            assertEquals(2, this.pstmt.executeUpdate());
+            assertNull(this.pstmt.getWarnings());
+            this.pstmt = testConn.prepareStatement("UPDATE testHints SET txt = 'Bb' WHERE id IN (SELECT /*+ qb_name(dummy) */ ?)");
+            this.pstmt.setInt(1, 2);
+            assertEquals(1, this.pstmt.executeUpdate());
+            assertNull(this.pstmt.getWarnings());
+            this.pstmt = testConn.prepareStatement("SELECT /*+ max_execution_time(100) */ ?, ? UNION SELECT /*+ qb_name(dummy) */ * FROM testHints");
+            this.pstmt.setInt(1, 1);
+            this.pstmt.setString(2, "Aa");
+            this.rs = this.pstmt.executeQuery();
+            assertNull(this.pstmt.getWarnings());
+            assertTrue(this.rs.next());
+            assertEquals(1, this.rs.getInt(1));
+            assertEquals("Aa", this.rs.getString(2));
+            assertTrue(this.rs.next());
+            assertEquals(2, this.rs.getInt(1));
+            assertEquals("Bb", this.rs.getString(2));
+            assertFalse(this.rs.next());
+            this.pstmt = testConn.prepareStatement("DELETE FROM testHints WHERE id IN (SELECT /*+ qb_name(dummy) */ ?)");
+            this.pstmt.setInt(1, 2);
+            assertEquals(1, this.pstmt.executeUpdate());
+            assertNull(this.pstmt.getWarnings());
+
+            testConn.close();
+        }
+    }
+
+    private void testHintsSyntax(String query, boolean processesHint, boolean warningExpected) throws Exception {
+        this.stmt.clearWarnings();
+        this.rs = this.stmt.executeQuery(query);
+        if (warningExpected) {
+            assertNotNull(this.stmt.getWarnings());
+            assertTrue(this.stmt.getWarnings().getMessage().startsWith("Optimizer hint syntax error"));
+        } else {
+            assertNull(this.stmt.getWarnings());
+        }
+        assertTrue(this.rs.next());
+        assertEquals(processesHint ? 1 : 0, this.rs.getInt(1));
+        assertFalse(this.rs.next());
     }
 }

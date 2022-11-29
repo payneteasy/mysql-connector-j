@@ -4,7 +4,7 @@
   The MySQL Connector/J is licensed under the terms of the GPLv2
   <http://www.gnu.org/licenses/old-licenses/gpl-2.0.html>, like most MySQL Connectors.
   There are special exceptions to the terms and conditions of the GPLv2 as it is applied to
-  this software, see the FLOSS License Exception
+  this software, see the FOSS License Exception
   <http://www.mysql.com/about/legal/licensing/foss-exception.html>.
 
   This program is free software; you can redistribute it and/or modify it under the terms
@@ -251,7 +251,8 @@ public class DatabaseMetaDataUsingInfoSchema extends DatabaseMetaData {
                 + "NULL AS SCOPE_SCHEMA,"
                 + "NULL AS SCOPE_TABLE,"
                 + "NULL AS SOURCE_DATA_TYPE,"
-                + "IF (EXTRA LIKE '%auto_increment%','YES','NO') AS IS_AUTOINCREMENT FROM INFORMATION_SCHEMA.COLUMNS WHERE ");
+                + "IF (EXTRA LIKE '%auto_increment%','YES','NO') AS IS_AUTOINCREMENT, "
+                + "IF (EXTRA LIKE '%GENERATED%','YES','NO') AS IS_GENERATEDCOLUMN FROM INFORMATION_SCHEMA.COLUMNS WHERE ");
 
         final boolean operatingOnInformationSchema = "information_schema".equalsIgnoreCase(catalog);
 

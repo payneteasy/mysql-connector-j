@@ -4,7 +4,7 @@
   The MySQL Connector/J is licensed under the terms of the GPLv2
   <http://www.gnu.org/licenses/old-licenses/gpl-2.0.html>, like most MySQL Connectors.
   There are special exceptions to the terms and conditions of the GPLv2 as it is applied to
-  this software, see the FLOSS License Exception
+  this software, see the FOSS License Exception
   <http://www.mysql.com/about/legal/licensing/foss-exception.html>.
 
   This program is free software; you can redistribute it and/or modify it under the terms
@@ -61,7 +61,8 @@ public class ServerPreparedStatement extends PreparedStatement {
     static {
         if (Util.isJdbc4()) {
             try {
-                JDBC_4_SPS_CTOR = Class.forName("com.mysql.jdbc.JDBC4ServerPreparedStatement").getConstructor(
+                String jdbc4ClassName = Util.isJdbc42() ? "com.mysql.jdbc.JDBC42ServerPreparedStatement" : "com.mysql.jdbc.JDBC4ServerPreparedStatement";
+                JDBC_4_SPS_CTOR = Class.forName(jdbc4ClassName).getConstructor(
                         new Class[] { MySQLConnection.class, String.class, String.class, Integer.TYPE, Integer.TYPE });
             } catch (SecurityException e) {
                 throw new RuntimeException(e);
@@ -649,7 +650,7 @@ public class ServerPreparedStatement extends PreparedStatement {
     }
 
     @Override
-    protected int[] executeBatchSerially(int batchTimeout) throws SQLException {
+    protected long[] executeBatchSerially(int batchTimeout) throws SQLException {
         synchronized (checkClosed().getConnectionMutex()) {
             MySQLConnection locallyScopedConn = this.connection;
 
@@ -665,11 +666,11 @@ public class ServerPreparedStatement extends PreparedStatement {
             BindValue[] oldBindValues = this.parameterBindings;
 
             try {
-                int[] updateCounts = null;
+                long[] updateCounts = null;
 
                 if (this.batchedArgs != null) {
                     int nbrCommands = this.batchedArgs.size();
-                    updateCounts = new int[nbrCommands];
+                    updateCounts = new long[nbrCommands];
 
                     if (this.retrieveGeneratedKeys) {
                         this.batchedGeneratedKeys = new ArrayList<ResultSetRow>(nbrCommands);
@@ -696,15 +697,16 @@ public class ServerPreparedStatement extends PreparedStatement {
                         for (commandIndex = 0; commandIndex < nbrCommands; commandIndex++) {
                             Object arg = this.batchedArgs.get(commandIndex);
 
-                            if (arg instanceof String) {
-                                updateCounts[commandIndex] = executeUpdate((String) arg);
-                            } else {
-                                this.parameterBindings = ((BatchedBindValues) arg).batchedParameterValues;
+                            try {
+                                if (arg instanceof String) {
+                                    updateCounts[commandIndex] = executeUpdateInternal((String) arg, true, this.retrieveGeneratedKeys);
 
-                                try {
-                                    // We need to check types each time, as
-                                    // the user might have bound different
-                                    // types in each addBatch()
+                                    // limit one generated key per OnDuplicateKey statement
+                                    getBatchedGeneratedKeys(this.results.getFirstCharOfQuery() == 'I' && containsOnDuplicateKeyInString((String) arg) ? 1 : 0);
+                                } else {
+                                    this.parameterBindings = ((BatchedBindValues) arg).batchedParameterValues;
+
+                                    // We need to check types each time, as the user might have bound different types in each addBatch()
 
                                     if (previousBindValuesForBatch != null) {
                                         for (int j = 0; j < this.parameterBindings.length; j++) {
@@ -717,41 +719,25 @@ public class ServerPreparedStatement extends PreparedStatement {
                                     }
 
                                     try {
-                                        updateCounts[commandIndex] = executeUpdate(false, true);
+                                        updateCounts[commandIndex] = executeUpdateInternal(false, true);
                                     } finally {
                                         previousBindValuesForBatch = this.parameterBindings;
                                     }
 
-                                    if (this.retrieveGeneratedKeys) {
-                                        java.sql.ResultSet rs = null;
+                                    // limit one generated key per OnDuplicateKey statement
+                                    getBatchedGeneratedKeys(containsOnDuplicateKeyUpdateInSQL() ? 1 : 0);
+                                }
+                            } catch (SQLException ex) {
+                                updateCounts[commandIndex] = EXECUTE_FAILED;
 
-                                        try {
-                                            // we don't want to use our version, because we've altered the behavior of ours to support batch updates
-                                            // (catch-22) Ideally, what we need here is super.super.getGeneratedKeys() but that construct doesn't exist in
-                                            // Java, so that's why there's this kludge.
-                                            rs = getGeneratedKeysInternal();
+                                if (this.continueBatchOnError && !(ex instanceof MySQLTimeoutException) && !(ex instanceof MySQLStatementCancelledException)
+                                        && !hasDeadlockOrTimeoutRolledBackTx(ex)) {
+                                    sqlEx = ex;
+                                } else {
+                                    long[] newUpdateCounts = new long[commandIndex];
+                                    System.arraycopy(updateCounts, 0, newUpdateCounts, 0, commandIndex);
 
-                                            while (rs.next()) {
-                                                this.batchedGeneratedKeys.add(new ByteArrayRow(new byte[][] { rs.getBytes(1) }, getExceptionInterceptor()));
-                                            }
-                                        } finally {
-                                            if (rs != null) {
-                                                rs.close();
-                                            }
-                                        }
-                                    }
-                                } catch (SQLException ex) {
-                                    updateCounts[commandIndex] = EXECUTE_FAILED;
-
-                                    if (this.continueBatchOnError && !(ex instanceof MySQLTimeoutException)
-                                            && !(ex instanceof MySQLStatementCancelledException) && !hasDeadlockOrTimeoutRolledBackTx(ex)) {
-                                        sqlEx = ex;
-                                    } else {
-                                        int[] newUpdateCounts = new int[commandIndex];
-                                        System.arraycopy(updateCounts, 0, newUpdateCounts, 0, commandIndex);
-
-                                        throw new java.sql.BatchUpdateException(ex.getMessage(), ex.getSQLState(), ex.getErrorCode(), newUpdateCounts);
-                                    }
+                                    throw SQLError.createBatchUpdateException(ex, newUpdateCounts, getExceptionInterceptor());
                                 }
                             }
                         }
@@ -766,11 +752,11 @@ public class ServerPreparedStatement extends PreparedStatement {
                     }
 
                     if (sqlEx != null) {
-                        throw new java.sql.BatchUpdateException(sqlEx.getMessage(), sqlEx.getSQLState(), sqlEx.getErrorCode(), updateCounts);
+                        throw SQLError.createBatchUpdateException(sqlEx, updateCounts, getExceptionInterceptor());
                     }
                 }
 
-                return (updateCounts != null) ? updateCounts : new int[0];
+                return (updateCounts != null) ? updateCounts : new long[0];
             } finally {
                 this.parameterBindings = oldBindValues;
                 this.sendTypesToServer = true;
@@ -912,7 +898,7 @@ public class ServerPreparedStatement extends PreparedStatement {
             if (bindValue.isNull) {
                 return null;
             } else if (bindValue.isLongData) {
-                throw SQLError.notImplemented();
+                throw SQLError.createSQLFeatureNotSupportedException();
             } else {
                 if (this.outByteBuffer == null) {
                     this.outByteBuffer = new Buffer(this.connection.getNetBufferLength());
@@ -1632,7 +1618,7 @@ public class ServerPreparedStatement extends PreparedStatement {
      */
     @Override
     public void setArray(int i, Array x) throws SQLException {
-        throw SQLError.notImplemented();
+        throw SQLError.createSQLFeatureNotSupportedException();
     }
 
     /**
@@ -1997,7 +1983,7 @@ public class ServerPreparedStatement extends PreparedStatement {
      */
     @Override
     public void setRef(int i, Ref x) throws SQLException {
-        throw SQLError.notImplemented();
+        throw SQLError.createSQLFeatureNotSupportedException();
     }
 
     /**
@@ -2159,6 +2145,10 @@ public class ServerPreparedStatement extends PreparedStatement {
             BindValue binding = getBinding(parameterIndex, false);
             setType(binding, MysqlDefs.FIELD_TYPE_DATETIME);
 
+            if (!this.sendFractionalSeconds) {
+                x = TimeUtil.truncateFractionalSeconds(x);
+            }
+
             if (!this.useLegacyDatetimeCode) {
                 binding.value = x;
             } else {
@@ -2200,7 +2190,7 @@ public class ServerPreparedStatement extends PreparedStatement {
     public void setUnicodeStream(int parameterIndex, InputStream x, int length) throws SQLException {
         checkClosed();
 
-        throw SQLError.notImplemented();
+        throw SQLError.createSQLFeatureNotSupportedException();
     }
 
     /**

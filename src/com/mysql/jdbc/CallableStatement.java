@@ -1,10 +1,10 @@
 /*
-  Copyright (c) 2002, 2014, Oracle and/or its affiliates. All rights reserved.
+  Copyright (c) 2002, 2015, Oracle and/or its affiliates. All rights reserved.
 
   The MySQL Connector/J is licensed under the terms of the GPLv2
   <http://www.gnu.org/licenses/old-licenses/gpl-2.0.html>, like most MySQL Connectors.
   There are special exceptions to the terms and conditions of the GPLv2 as it is applied to
-  this software, see the FLOSS License Exception
+  this software, see the FOSS License Exception
   <http://www.mysql.com/about/legal/licensing/foss-exception.html>.
 
   This program is free software; you can redistribute it and/or modify it under the terms
@@ -62,9 +62,10 @@ public class CallableStatement extends PreparedStatement implements java.sql.Cal
     static {
         if (Util.isJdbc4()) {
             try {
-                JDBC_4_CSTMT_2_ARGS_CTOR = Class.forName("com.mysql.jdbc.JDBC4CallableStatement").getConstructor(
-                        new Class[] { MySQLConnection.class, CallableStatementParamInfo.class });
-                JDBC_4_CSTMT_4_ARGS_CTOR = Class.forName("com.mysql.jdbc.JDBC4CallableStatement").getConstructor(
+                String jdbc4ClassName = Util.isJdbc42() ? "com.mysql.jdbc.JDBC42CallableStatement" : "com.mysql.jdbc.JDBC4CallableStatement";
+                JDBC_4_CSTMT_2_ARGS_CTOR = Class.forName(jdbc4ClassName)
+                        .getConstructor(new Class[] { MySQLConnection.class, CallableStatementParamInfo.class });
+                JDBC_4_CSTMT_4_ARGS_CTOR = Class.forName(jdbc4ClassName).getConstructor(
                         new Class[] { MySQLConnection.class, String.class, String.class, Boolean.TYPE });
             } catch (SecurityException e) {
                 throw new RuntimeException(e);
@@ -128,12 +129,12 @@ public class CallableStatement extends PreparedStatement implements java.sql.Cal
         }
     }
 
-	public static class CallableStatementParamInfo {
+    public static class CallableStatementParamInfo implements ParameterMetaData {
         String catalogInUse;
 
         boolean isFunctionCall;
 
-        boolean yearIsDateType;
+        MySQLConnection connection;
 
         String nativeSql;
 
@@ -161,12 +162,12 @@ public class CallableStatement extends PreparedStatement implements java.sql.Cal
          *            the metadata for all parameters for this stored
          *            procedure or function.
          */
-        CallableStatementParamInfo(CallableStatementParamInfo fullParamInfo, String originalSql, String currentCatalog, int[] placeholderToParameterIndexMap, boolean yearIsDateType) {
+        CallableStatementParamInfo(CallableStatementParamInfo fullParamInfo, String originalSql, String currentCatalog, int[] placeholderToParameterIndexMap, MySQLConnection connection) {
             this.nativeSql = originalSql;
             this.catalogInUse = currentCatalog;
             this.isFunctionCall = fullParamInfo.isFunctionCall;
-					  this.yearIsDateType = yearIsDateType;
-					  @SuppressWarnings("synthetic-access")
+            this.connection = connection;
+            @SuppressWarnings("synthetic-access")
             int[] localParameterMap = placeholderToParameterIndexMap;
             int parameterMapLength = localParameterMap.length;
 
@@ -195,13 +196,13 @@ public class CallableStatement extends PreparedStatement implements java.sql.Cal
         }
 
         @SuppressWarnings("synthetic-access")
-        CallableStatementParamInfo(java.sql.ResultSet paramTypesRs, String originalSql, String currentCatalog, boolean callingStoredFunction, boolean yearIsDateType) throws SQLException {
+        CallableStatementParamInfo(java.sql.ResultSet paramTypesRs, String originalSql, String currentCatalog, boolean callingStoredFunction, MySQLConnection connection) throws SQLException {
             boolean hadRows = paramTypesRs.last();
 
             this.nativeSql = originalSql;
             this.catalogInUse = currentCatalog;
             this.isFunctionCall = callingStoredFunction;
-  					this.yearIsDateType = yearIsDateType;
+            this.connection = connection;
 
             if (hadRows) {
                 this.numParameters = paramTypesRs.getRow();
@@ -300,7 +301,7 @@ public class CallableStatement extends PreparedStatement implements java.sql.Cal
             }
 
             return ResultSetMetaData.getClassNameForJavaType(getParameterType(arg0), isUnsigned, mysqlTypeIfKnown, isBinaryOrBlob, false,
-								    yearIsDateType);
+                    this.connection.getYearIsDateType());
         }
 
         public int getParameterCount() throws SQLException {
@@ -360,70 +361,29 @@ public class CallableStatement extends PreparedStatement implements java.sql.Cal
         int numberOfParameters() {
             return this.numParameters;
         }
-    }
-
-    /**
-     * Can't implement this directly, as then you can't use callable statements
-     * on JDK-1.3.1, which unfortunately isn't EOL'd yet, and still present
-     * quite a bit out there in the wild (Websphere, FreeBSD, anyone?)
-     */
-
-    protected class CallableStatementParamInfoJDBC3 extends CallableStatementParamInfo implements ParameterMetaData {
-
-        CallableStatementParamInfoJDBC3(java.sql.ResultSet paramTypesRs) throws SQLException {
-            super(paramTypesRs, originalSql, currentCatalog, callingStoredFunction, connection.getYearIsDateType());
-        }
-
-        public CallableStatementParamInfoJDBC3(CallableStatementParamInfo paramInfo) {
-            super(paramInfo, originalSql, currentCatalog, placeholderToParameterIndexMap, connection.getYearIsDateType());
-        }
 
         /**
-         * Returns true if this either implements the interface argument or is directly or indirectly a wrapper
-         * for an object that does. Returns false otherwise. If this implements the interface then return true,
-         * else if this is a wrapper then return the result of recursively calling <code>isWrapperFor</code> on the wrapped
-         * object. If this does not implement the interface and is not a wrapper, return false.
-         * This method should be implemented as a low-cost operation compared to <code>unwrap</code> so that
-         * callers can use this method to avoid expensive <code>unwrap</code> calls that may fail. If this method
-         * returns true then calling <code>unwrap</code> with the same argument should succeed.
-         * 
-         * @param interfaces
-         *            a Class defining an interface.
-         * @return true if this implements the interface or directly or indirectly wraps an object that does.
-         * @throws java.sql.SQLException
-         *             if an error occurs while determining whether this is a wrapper
-         *             for an object with the given interface.
-         * @since 1.6
+         * @see java.sql.Wrapper#isWrapperFor(Class)
          */
         public boolean isWrapperFor(Class<?> iface) throws SQLException {
-            checkClosed();
+            MySQLConnection c = this.connection;
+            if (c == null) {
+                throw SQLError.createSQLException(Messages.getString("Statement.49"), SQLError.SQL_STATE_ILLEGAL_ARGUMENT, null/*getExceptionInterceptor()*/);
+            }
 
             // This works for classes that aren't actually wrapping anything
             return iface.isInstance(this);
         }
 
         /**
-         * Returns an object that implements the given interface to allow access to non-standard methods,
-         * or standard methods not exposed by the proxy.
-         * The result may be either the object found to implement the interface or a proxy for that object.
-         * If the receiver implements the interface then that is the object. If the receiver is a wrapper
-         * and the wrapped object implements the interface then that is the object. Otherwise the object is
-         * the result of calling <code>unwrap</code> recursively on the wrapped object. If the receiver is not a
-         * wrapper and does not implement the interface, then an <code>SQLException</code> is thrown.
-         * 
-         * @param iface
-         *            A Class defining an interface that the result must implement.
-         * @return an object that implements the interface. May be a proxy for the actual implementing object.
-         * @throws java.sql.SQLException
-         *             If no object found that implements the interface
-         * @since 1.6
+         * @see java.sql.Wrapper#unwrap(Class)
          */
-        public Object unwrap(Class<?> iface) throws java.sql.SQLException {
+        public <T> T unwrap(Class<T> iface) throws java.sql.SQLException {
             try {
                 // This works for classes that aren't actually wrapping anything
-                return Util.cast(iface, this);
+                return iface.cast(this);
             } catch (ClassCastException cce) {
-                throw SQLError.createSQLException("Unable to unwrap to " + iface.toString(), SQLError.SQL_STATE_ILLEGAL_ARGUMENT, getExceptionInterceptor());
+                throw SQLError.createSQLException("Unable to unwrap to " + iface.toString(), SQLError.SQL_STATE_ILLEGAL_ARGUMENT, null/*getExceptionInterceptor()*/);
             }
         }
     }
@@ -865,11 +825,7 @@ public class CallableStatement extends PreparedStatement implements java.sql.Cal
 
     private void convertGetProcedureColumnsToInternalDescriptors(java.sql.ResultSet paramTypesRs) throws SQLException {
         synchronized (checkClosed().getConnectionMutex()) {
-            if (!this.connection.isRunningOnJDK13()) {
-                this.paramInfo = new CallableStatementParamInfoJDBC3(paramTypesRs);
-            } else {
-                this.paramInfo = new CallableStatementParamInfo(paramTypesRs, originalSql, currentCatalog, callingStoredFunction, connection.getYearIsDateType());
-            }
+            this.paramInfo = new CallableStatementParamInfo(paramTypesRs, originalSql, currentCatalog, callingStoredFunction, connection);
         }
     }
 
@@ -938,26 +894,7 @@ public class CallableStatement extends PreparedStatement implements java.sql.Cal
      */
     @Override
     public int executeUpdate() throws SQLException {
-        synchronized (checkClosed().getConnectionMutex()) {
-            int returnVal = -1;
-
-            checkStreamability();
-
-            if (this.callingStoredFunction) {
-                execute();
-
-                return -1;
-            }
-
-            setInOutParamsOnServer();
-            setOutParams();
-
-            returnVal = super.executeUpdate();
-
-            retrieveOutParams();
-
-            return returnVal;
-        }
+        return Util.truncateAndConvertToInt(executeLargeUpdate());
     }
 
     private String extractProcedureName() throws SQLException {
@@ -1601,10 +1538,10 @@ public class CallableStatement extends PreparedStatement implements java.sql.Cal
     public ParameterMetaData getParameterMetaData() throws SQLException {
         synchronized (checkClosed().getConnectionMutex()) {
             if (this.placeholderToParameterIndexMap == null) {
-                return (CallableStatementParamInfoJDBC3) this.paramInfo;
+                return this.paramInfo;
             }
 
-            return new CallableStatementParamInfoJDBC3(this.paramInfo);
+            return new CallableStatementParamInfo(this.paramInfo, originalSql, currentCatalog, placeholderToParameterIndexMap, connection);
         }
     }
 
@@ -2296,12 +2233,8 @@ public class CallableStatement extends PreparedStatement implements java.sql.Cal
 
     @Override
     public int[] executeBatch() throws SQLException {
-        if (this.hasOutputParams) {
-            throw SQLError.createSQLException("Can't call executeBatch() on CallableStatement with OUTPUT parameters", SQLError.SQL_STATE_ILLEGAL_ARGUMENT,
-                    getExceptionInterceptor());
-        }
+        return Util.truncateAndConvertToInt(executeLargeBatch());
 
-        return super.executeBatch();
     }
 
     @Override
@@ -2470,5 +2403,42 @@ public class CallableStatement extends PreparedStatement implements java.sql.Cal
                 return false;
             }
         }
+    }
+
+    /**
+     * JDBC 4.2
+     */
+    @Override
+    public long executeLargeUpdate() throws SQLException {
+        synchronized (checkClosed().getConnectionMutex()) {
+            long returnVal = -1;
+
+            checkStreamability();
+
+            if (this.callingStoredFunction) {
+                execute();
+
+                return -1;
+            }
+
+            setInOutParamsOnServer();
+            setOutParams();
+
+            returnVal = super.executeLargeUpdate();
+
+            retrieveOutParams();
+
+            return returnVal;
+        }
+    }
+
+    @Override
+    public long[] executeLargeBatch() throws SQLException {
+        if (this.hasOutputParams) {
+            throw SQLError.createSQLException("Can't call executeBatch() on CallableStatement with OUTPUT parameters", SQLError.SQL_STATE_ILLEGAL_ARGUMENT,
+                    getExceptionInterceptor());
+        }
+
+        return super.executeLargeBatch();
     }
 }

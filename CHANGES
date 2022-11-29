@@ -1,5 +1,46 @@
 # Changelog
 # $Id$
+10-15-15 - Version 5.1.37
+
+  - Fix for Bug#21876798, CONNECTOR/J WITH MYSQL FABRIC AND SPRING PRODUCES PROXY ERROR.
+
+  - Fix for Bug#76859 (20969312), DBMD getColumns using I_S doesn't have column IS_GENERATEDCOLUMN as per JDBC 4.1.
+    Added support for GENERATED COLUMNS.
+
+  - Update Time Zone mappings with IANA Time Zone database tsdata2015f and Unicode CLDR v.28.
+
+  - Update DatabaseMetaData SQL keywords.
+
+  - Added tests for Optimizer hints syntax introduced in MySQL 5.7.7.
+
+  - Fix for Bug#Bug #21860833, JSON DATA TYPE DOESN'T WORK WITH SSPS.
+    Added support for JSON data type.
+
+  - Added support for JDBC 4.2 new features.
+
+  - Fix for Bug#16634180, LOCK WAIT TIMEOUT EXCEEDED CAUSES SQLEXCEPTION, SHOULD CAUSE SQLTRANSIENTEXCEPTION
+
+  - Fix for Bug#75849 (20536592), NPE in abortInternal() method on line 1358 of ConnectionImpl.
+
+  - Fix for Bug#78106 (21648826), Potential memory leak with inflater.
+
+  - Fix for Bug#78225 (21697684), DEFAULT NO_AUTO_CREATE_USER SQL_MODE BEHAVIOR BROKE SOME TESTS
+
+  - Fix for Bug#77665 (21415165), JDBC fails to connect with MySQL 5.0.
+
+  - Fix for Bug#77681 (21429909), rewrite replace sql like insert when rewriteBatchedStatements=true (contribution).
+    Thanks to Jie Han for his contribution.
+
+  - Fix for Bug#77449 (21304726) Add 'truncateFractionalSeconds=true|false' property (contribution).
+    The property 'sendFractionalSeconds' was added instead of the proposed 'truncateFractionalSeconds'.
+    Thanks to KwonNam for his contribution.
+
+  - Fix for Bug#50348 (11758179), mysql connector/j 5.1.10 render the wrong value for dateTime column in GMT DB.
+
+  - Fix for Bug#75670 (20433047), Connection fails with "Public Key Retrieval is not allowed" for native auth.
+
+  - Fix for Bug#76187 (20675539), getTypeInfo report maximum precision of 255 for varchar.
+
 06-30-15 - Version 5.1.36
 
   - Add test for new syntax 'ALTER TABLE ... DISCARD|IMPORT PARTITION ...' introduced in MySQL 5.7.4.

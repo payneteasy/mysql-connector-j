@@ -4,7 +4,7 @@
   The MySQL Connector/J is licensed under the terms of the GPLv2
   <http://www.gnu.org/licenses/old-licenses/gpl-2.0.html>, like most MySQL Connectors.
   There are special exceptions to the terms and conditions of the GPLv2 as it is applied to
-  this software, see the FLOSS License Exception
+  this software, see the FOSS License Exception
   <http://www.mysql.com/about/legal/licensing/foss-exception.html>.
 
   This program is free software; you can redistribute it and/or modify it under the terms
@@ -1632,6 +1632,10 @@ public class ReplicationConnection implements Connection, PingTarget {
         return getCurrentConnection().getUseLegacyDatetimeCode();
     }
 
+    public boolean getSendFractionalSeconds() {
+        return getCurrentConnection().getSendFractionalSeconds();
+    }
+
     public boolean getUseLocalSessionState() {
         return getCurrentConnection().getUseLocalSessionState();
     }
@@ -2490,6 +2494,11 @@ public class ReplicationConnection implements Connection, PingTarget {
 
     }
 
+    public void setSendFractionalSeconds(boolean flag) {
+        // not runtime configurable
+
+    }
+
     public void setUseNanosForElapsedTime(boolean flag) {
         // not runtime configurable
 
@@ -3012,5 +3021,13 @@ public class ReplicationConnection implements Connection, PingTarget {
 
     public void setEnabledSSLCipherSuites(String cipherSuites) {
         getCurrentConnection().setEnabledSSLCipherSuites(cipherSuites);
+    }
+
+    public boolean getEnableEscapeProcessing() {
+        return getCurrentConnection().getEnableEscapeProcessing();
+    }
+
+    public void setEnableEscapeProcessing(boolean flag) {
+        getCurrentConnection().setEnableEscapeProcessing(flag);
     }
 }

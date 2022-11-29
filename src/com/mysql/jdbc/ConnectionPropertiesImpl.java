@@ -4,7 +4,7 @@
   The MySQL Connector/J is licensed under the terms of the GPLv2
   <http://www.gnu.org/licenses/old-licenses/gpl-2.0.html>, like most MySQL Connectors.
   There are special exceptions to the terms and conditions of the GPLv2 as it is applied to
-  this software, see the FLOSS License Exception
+  this software, see the FOSS License Exception
   <http://www.mysql.com/about/legal/licensing/foss-exception.html>.
 
   This program is free software; you can redistribute it and/or modify it under the terms
@@ -1167,6 +1167,9 @@ public class ConnectionPropertiesImpl implements Serializable, ConnectionPropert
     private BooleanConnectionProperty useLegacyDatetimeCode = new BooleanConnectionProperty("useLegacyDatetimeCode", true,
             Messages.getString("ConnectionProperties.useLegacyDatetimeCode"), "5.1.6", MISC_CATEGORY, Integer.MIN_VALUE);
 
+    private BooleanConnectionProperty sendFractionalSeconds = new BooleanConnectionProperty("sendFractionalSeconds", true,
+            Messages.getString("ConnectionProperties.sendFractionalSeconds"), "5.1.37", MISC_CATEGORY, Integer.MIN_VALUE);
+
     private BooleanConnectionProperty useNanosForElapsedTime = new BooleanConnectionProperty("useNanosForElapsedTime", false,
             Messages.getString("ConnectionProperties.useNanosForElapsedTime"), "5.0.7", DEBUGING_PROFILING_CATEGORY, Integer.MIN_VALUE);
 
@@ -1298,6 +1301,9 @@ public class ConnectionPropertiesImpl implements Serializable, ConnectionPropert
 
     private StringConnectionProperty enabledSSLCipherSuites = new StringConnectionProperty("enabledSSLCipherSuites", null,
             Messages.getString("ConnectionProperties.enabledSSLCipherSuites"), "5.1.35", SECURITY_CATEGORY, 11);
+
+    private BooleanConnectionProperty enableEscapeProcessing = new BooleanConnectionProperty("enableEscapeProcessing", true,
+            Messages.getString("ConnectionProperties.enableEscapeProcessing"), "5.1.37", PERFORMANCE_CATEGORY, Integer.MIN_VALUE);
 
     protected DriverPropertyInfo[] exposeAsDriverPropertyInfoInternal(Properties info, int slotsToReserve) throws SQLException {
         initializeProperties(info);
@@ -4514,6 +4520,14 @@ public class ConnectionPropertiesImpl implements Serializable, ConnectionPropert
         this.useLegacyDatetimeCode.setValue(flag);
     }
 
+    public boolean getSendFractionalSeconds() {
+        return this.sendFractionalSeconds.getValueAsBoolean();
+    }
+
+    public void setSendFractionalSeconds(boolean flag) {
+        this.sendFractionalSeconds.setValue(flag);
+    }
+
     public int getSelfDestructOnPingSecondsLifetime() {
         return this.selfDestructOnPingSecondsLifetime.getValueAsInt();
     }
@@ -4852,5 +4866,13 @@ public class ConnectionPropertiesImpl implements Serializable, ConnectionPropert
 
     public void setEnabledSSLCipherSuites(String cipherSuites) {
         this.enabledSSLCipherSuites.setValue(cipherSuites);
+    }
+
+    public boolean getEnableEscapeProcessing() {
+        return this.enableEscapeProcessing.getValueAsBoolean();
+    }
+
+    public void setEnableEscapeProcessing(boolean flag) {
+        this.enableEscapeProcessing.setValue(flag);
     }
 }

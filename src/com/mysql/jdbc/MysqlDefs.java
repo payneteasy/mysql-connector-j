@@ -4,7 +4,7 @@
   The MySQL Connector/J is licensed under the terms of the GPLv2
   <http://www.gnu.org/licenses/old-licenses/gpl-2.0.html>, like most MySQL Connectors.
   There are special exceptions to the terms and conditions of the GPLv2 as it is applied to
-  this software, see the FLOSS License Exception
+  this software, see the FOSS License Exception
   <http://www.mysql.com/about/legal/licensing/foss-exception.html>.
 
   This program is free software; you can redistribute it and/or modify it under the terms
@@ -126,6 +126,8 @@ public final class MysqlDefs {
 
     // Newer data types
     static final int FIELD_TYPE_YEAR = 13;
+
+    static final int FIELD_TYPE_JSON = 245;
 
     static final int INIT_DB = 2;
 
@@ -290,6 +292,7 @@ public final class MysqlDefs {
 
                 break;
 
+            case MysqlDefs.FIELD_TYPE_JSON:
             case MysqlDefs.FIELD_TYPE_STRING:
                 jdbcType = Types.CHAR;
 
@@ -379,6 +382,8 @@ public final class MysqlDefs {
             return Types.VARBINARY; // no concrete type on the wire
         } else if (mysqlType.equalsIgnoreCase("BIT")) {
             return mysqlToJavaType(FIELD_TYPE_BIT);
+        } else if (mysqlType.equalsIgnoreCase("JSON")) {
+            return mysqlToJavaType(FIELD_TYPE_JSON);
         }
 
         // Punt
@@ -465,6 +470,9 @@ public final class MysqlDefs {
             case MysqlDefs.FIELD_TYPE_GEOMETRY:
                 return "FIELD_TYPE_GEOMETRY";
 
+            case MysqlDefs.FIELD_TYPE_JSON:
+                return "FIELD_TYPE_JSON";
+
             default:
                 return " Unknown MySQL Type # " + mysqlType;
         }
@@ -505,6 +513,7 @@ public final class MysqlDefs {
         mysqlToJdbcTypesMap.put("ENUM", Integer.valueOf(mysqlToJavaType(FIELD_TYPE_ENUM)));
         mysqlToJdbcTypesMap.put("SET", Integer.valueOf(mysqlToJavaType(FIELD_TYPE_SET)));
         mysqlToJdbcTypesMap.put("GEOMETRY", Integer.valueOf(mysqlToJavaType(FIELD_TYPE_GEOMETRY)));
+        mysqlToJdbcTypesMap.put("JSON", Integer.valueOf(mysqlToJavaType(FIELD_TYPE_JSON)));
     }
 
     static final void appendJdbcTypeMappingQuery(StringBuilder buf, String mysqlTypeColumnName) {
@@ -540,6 +549,5 @@ public final class MysqlDefs {
         buf.append(" ELSE ");
         buf.append(Types.OTHER);
         buf.append(" END ");
-
     }
 }

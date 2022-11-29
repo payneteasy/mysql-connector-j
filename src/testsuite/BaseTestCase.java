@@ -4,7 +4,7 @@
   The MySQL Connector/J is licensed under the terms of the GPLv2
   <http://www.gnu.org/licenses/old-licenses/gpl-2.0.html>, like most MySQL Connectors.
   There are special exceptions to the terms and conditions of the GPLv2 as it is applied to
-  this software, see the FLOSS License Exception
+  this software, see the FOSS License Exception
   <http://www.mysql.com/about/legal/licensing/foss-exception.html>.
 
   This program is free software; you can redistribute it and/or modify it under the terms
@@ -29,7 +29,6 @@ import java.io.FileOutputStream;
 import java.io.FilenameFilter;
 import java.io.IOException;
 import java.lang.reflect.Method;
-import java.sql.Blob;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
@@ -46,6 +45,7 @@ import java.util.concurrent.Callable;
 
 import junit.framework.TestCase;
 
+import com.mysql.jdbc.ConnectionImpl;
 import com.mysql.jdbc.MySQLConnection;
 import com.mysql.jdbc.NonRegisteringDriver;
 import com.mysql.jdbc.ReplicationConnection;
@@ -57,7 +57,7 @@ import com.mysql.jdbc.Util;
  * Base class for all test cases. Creates connections, statements, etc. and closes them.
  */
 public abstract class BaseTestCase extends TestCase {
-    protected final static String SSL_CIPHERS_FOR_576 = "TLS_RSA_WITH_AES_128_CBC_SHA,SSL_RSA_WITH_RC4_128_SHA,SSL_RSA_WITH_3DES_EDE_CBC_SHA,"
+    protected final static String CUSTOM_SSL_CIPHERS = "TLS_RSA_WITH_AES_128_CBC_SHA,SSL_RSA_WITH_RC4_128_SHA,SSL_RSA_WITH_3DES_EDE_CBC_SHA,"
             + "SSL_RSA_WITH_RC4_128_MD5,SSL_RSA_WITH_DES_CBC_SHA";
 
     private final static String ADMIN_CONNECTION_PROPERTY_NAME = "com.mysql.jdbc.testsuite.admin-url";
@@ -70,11 +70,18 @@ public abstract class BaseTestCase extends TestCase {
      */
     protected static String dbUrl = "jdbc:mysql:///test";
 
+    /**
+     * JDBC URL, initialized from com.mysql.jdbc.testsuite.url.sha256default system property
+     */
+    protected static String sha256Url = null;
+
     /** Instance counter */
     private static int instanceCount = 1;
 
     /** Connection to server, initialized in setUp() Cleaned up in tearDown(). */
     protected Connection conn = null;
+
+    protected Connection sha256Conn = null;
 
     /** list of schema objects to be dropped in tearDown */
     private List<String[]> createdObjects;
@@ -96,13 +103,15 @@ public abstract class BaseTestCase extends TestCase {
      */
     protected ResultSet rs = null;
 
+    protected ResultSet sha256Rs = null;
+
     /**
      * Statement to be used in tests, initialized in setUp(). Cleaned up in
      * tearDown().
      */
     protected Statement stmt = null;
 
-    private boolean runningOnJdk131 = false;
+    protected Statement sha256Stmt = null;
 
     private boolean isOnCSFS = true;
 
@@ -128,91 +137,174 @@ public abstract class BaseTestCase extends TestCase {
             }
         }
 
+        String defaultSha256Url = System.getProperty("com.mysql.jdbc.testsuite.url.sha256default");
+
+        if ((defaultSha256Url != null) && (defaultSha256Url.trim().length() != 0)) {
+            sha256Url = defaultSha256Url;
+        }
+
         String newDriver = System.getProperty("com.mysql.jdbc.testsuite.driver");
 
         if ((newDriver != null) && (newDriver.trim().length() != 0)) {
             this.dbClass = newDriver;
         }
-
-        try {
-            Blob.class.getMethod("truncate", new Class[] { Long.TYPE });
-            this.runningOnJdk131 = false;
-        } catch (NoSuchMethodException nsme) {
-            this.runningOnJdk131 = true;
-        }
     }
 
     protected void createSchemaObject(String objectType, String objectName, String columnsAndOtherStuff) throws SQLException {
-        this.createdObjects.add(new String[] { objectType, objectName });
-        dropSchemaObject(objectType, objectName);
+        createSchemaObject(this.stmt, objectType, objectName, columnsAndOtherStuff);
+    }
 
-        StringBuilder createSql = new StringBuilder(objectName.length() + objectType.length() + columnsAndOtherStuff.length() + 10);
-        createSql.append("CREATE  ");
-        createSql.append(objectType);
-        createSql.append(" ");
-        createSql.append(objectName);
-        createSql.append(" ");
-        createSql.append(columnsAndOtherStuff);
+    protected void createSchemaObject(Statement st, String objectType, String objectName, String columnsAndOtherStuff) throws SQLException {
+        if (st != null) {
+            this.createdObjects.add(new String[] { objectType, objectName });
+            try {
+                dropSchemaObject(st, objectType, objectName);
+            } catch (SQLException ex) {
+                // ignore DROP USER failures
+                if (!ex.getMessage().startsWith("Operation DROP USER failed")) {
+                    throw ex;
+                }
+            }
 
-        try {
-            this.stmt.executeUpdate(createSql.toString());
-        } catch (SQLException sqlEx) {
-            if ("42S01".equals(sqlEx.getSQLState())) {
-                System.err.println("WARN: Stale mysqld table cache preventing table creation - flushing tables and trying again");
-                this.stmt.executeUpdate("FLUSH TABLES"); // some bug in 5.1 on the mac causes tables to not disappear from the cache
-                this.stmt.executeUpdate(createSql.toString());
-            } else {
-                throw sqlEx;
+            StringBuilder createSql = new StringBuilder(objectName.length() + objectType.length() + columnsAndOtherStuff.length() + 10);
+            createSql.append("CREATE  ");
+            createSql.append(objectType);
+            createSql.append(" ");
+            createSql.append(objectName);
+            createSql.append(" ");
+            createSql.append(columnsAndOtherStuff);
+
+            try {
+                st.executeUpdate(createSql.toString());
+            } catch (SQLException sqlEx) {
+                if ("42S01".equals(sqlEx.getSQLState())) {
+                    System.err.println("WARN: Stale mysqld table cache preventing table creation - flushing tables and trying again");
+                    st.executeUpdate("FLUSH TABLES"); // some bug in 5.1 on the mac causes tables to not disappear from the cache
+                    st.executeUpdate(createSql.toString());
+                } else {
+                    throw sqlEx;
+                }
             }
         }
     }
 
+    protected void createFunction(Statement st, String functionName, String functionDefn) throws SQLException {
+        createSchemaObject(st, "FUNCTION", functionName, functionDefn);
+    }
+
     protected void createFunction(String functionName, String functionDefn) throws SQLException {
-        createSchemaObject("FUNCTION", functionName, functionDefn);
+        createFunction(this.stmt, functionName, functionDefn);
+    }
+
+    protected void dropFunction(Statement st, String functionName) throws SQLException {
+        dropSchemaObject(st, "FUNCTION", functionName);
     }
 
     protected void dropFunction(String functionName) throws SQLException {
-        dropSchemaObject("FUNCTION", functionName);
+        dropFunction(this.stmt, functionName);
+    }
+
+    protected void createProcedure(Statement st, String procedureName, String procedureDefn) throws SQLException {
+        createSchemaObject(st, "PROCEDURE", procedureName, procedureDefn);
     }
 
     protected void createProcedure(String procedureName, String procedureDefn) throws SQLException {
-        createSchemaObject("PROCEDURE", procedureName, procedureDefn);
+        createProcedure(this.stmt, procedureName, procedureDefn);
+    }
+
+    protected void dropProcedure(Statement st, String procedureName) throws SQLException {
+        dropSchemaObject(st, "PROCEDURE", procedureName);
     }
 
     protected void dropProcedure(String procedureName) throws SQLException {
-        dropSchemaObject("PROCEDURE", procedureName);
+        dropProcedure(this.stmt, procedureName);
+    }
+
+    protected void createTable(Statement st, String tableName, String columnsAndOtherStuff) throws SQLException {
+        createSchemaObject(st, "TABLE", tableName, columnsAndOtherStuff);
     }
 
     protected void createTable(String tableName, String columnsAndOtherStuff) throws SQLException {
-        createSchemaObject("TABLE", tableName, columnsAndOtherStuff);
+        createTable(this.stmt, tableName, columnsAndOtherStuff);
+    }
+
+    protected void createTable(Statement st, String tableName, String columnsAndOtherStuff, String engine) throws SQLException {
+        createSchemaObject(st, "TABLE", tableName, columnsAndOtherStuff + " " + getTableTypeDecl() + " = " + engine);
     }
 
     protected void createTable(String tableName, String columnsAndOtherStuff, String engine) throws SQLException {
-        createSchemaObject("TABLE", tableName, columnsAndOtherStuff + " " + getTableTypeDecl() + " = " + engine);
+        createTable(this.stmt, tableName, columnsAndOtherStuff, engine);
+    }
+
+    protected void dropTable(Statement st, String tableName) throws SQLException {
+        dropSchemaObject(st, "TABLE", tableName);
     }
 
     protected void dropTable(String tableName) throws SQLException {
-        dropSchemaObject("TABLE", tableName);
+        dropTable(this.stmt, tableName);
+    }
+
+    protected void createView(Statement st, String viewName, String columnsAndOtherStuff) throws SQLException {
+        createSchemaObject(st, "VIEW", viewName, columnsAndOtherStuff);
     }
 
     protected void createView(String viewName, String columnsAndOtherStuff) throws SQLException {
-        createSchemaObject("VIEW", viewName, columnsAndOtherStuff);
+        createView(this.stmt, viewName, columnsAndOtherStuff);
+    }
+
+    protected void dropView(Statement st, String viewName) throws SQLException {
+        dropSchemaObject(st, "VIEW", viewName);
     }
 
     protected void dropView(String viewName) throws SQLException {
-        dropSchemaObject("VIEW", viewName);
+        dropView(this.stmt, viewName);
+    }
+
+    protected void createDatabase(Statement st, String databaseName) throws SQLException {
+        createSchemaObject(st, "DATABASE", databaseName, "");
     }
 
     protected void createDatabase(String databaseName) throws SQLException {
-        createSchemaObject("DATABASE", databaseName, "");
+        createDatabase(this.stmt, databaseName);
+    }
+
+    protected void dropDatabase(Statement st, String databaseName) throws SQLException {
+        dropSchemaObject(st, "DATABASE", databaseName);
     }
 
     protected void dropDatabase(String databaseName) throws SQLException {
-        dropSchemaObject("DATABASE", databaseName);
+        dropDatabase(this.stmt, databaseName);
+    }
+
+    protected void createUser(Statement st, String userName, String otherStuff) throws SQLException {
+        createSchemaObject(st, "USER", userName, otherStuff);
+    }
+
+    protected void createUser(String userName, String otherStuff) throws SQLException {
+        createUser(this.stmt, userName, otherStuff);
+    }
+
+    protected void dropUser(Statement st, String user) throws SQLException {
+        dropSchemaObject(st, "USER", user);
+    }
+
+    protected void dropUser(String user) throws SQLException {
+        dropUser(this.stmt, user);
     }
 
     protected void dropSchemaObject(String objectType, String objectName) throws SQLException {
-        this.stmt.executeUpdate("DROP " + objectType + " IF EXISTS " + objectName);
+        dropSchemaObject(this.stmt, objectType, objectName);
+    }
+
+    protected void dropSchemaObject(Statement st, String objectType, String objectName) throws SQLException {
+        if (st != null) {
+            if (!objectType.equalsIgnoreCase("USER") || ((ConnectionImpl) st.getConnection()).versionMeetsMinimum(5, 7, 8)) {
+                st.executeUpdate("DROP " + objectType + " IF EXISTS " + objectName);
+            } else {
+                st.executeUpdate("DROP " + objectType + " " + objectName);
+            }
+            st.executeUpdate("flush privileges");
+        }
     }
 
     protected Connection getAdminConnection() throws SQLException {
@@ -275,6 +367,19 @@ public abstract class BaseTestCase extends TestCase {
 
     protected Connection getConnectionWithProps(String url, Properties props) throws SQLException {
         return DriverManager.getConnection(url, props);
+    }
+
+    protected Connection getNewConnection() throws SQLException {
+        return DriverManager.getConnection(dbUrl);
+    }
+
+    protected Connection getNewSha256Connection() throws SQLException {
+        if (sha256Url != null) {
+            Properties props = new Properties();
+            props.setProperty("allowPublicKeyRetrieval", "true");
+            return DriverManager.getConnection(sha256Url, props);
+        }
+        return null;
     }
 
     /**
@@ -479,6 +584,7 @@ public abstract class BaseTestCase extends TestCase {
         if (this.dbClass.equals("gwe.sql.gweMysqlDriver")) {
             try {
                 this.conn = DriverManager.getConnection(dbUrl, "", "");
+                this.sha256Conn = sha256Url == null ? null : DriverManager.getConnection(sha256Url, "", "");
             } catch (Exception ex) {
                 ex.printStackTrace();
                 fail();
@@ -486,6 +592,9 @@ public abstract class BaseTestCase extends TestCase {
         } else {
             try {
                 this.conn = DriverManager.getConnection(dbUrl);
+                Properties props = new Properties();
+                props.setProperty("allowPublicKeyRetrieval", "true");
+                this.sha256Conn = sha256Url == null ? null : DriverManager.getConnection(sha256Url, props);
             } catch (Exception ex) {
                 ex.printStackTrace();
                 fail();
@@ -501,18 +610,37 @@ public abstract class BaseTestCase extends TestCase {
                 this.rs = this.stmt.executeQuery("SELECT VERSION()");
                 this.rs.next();
                 logDebug("Connected to " + this.rs.getString(1));
-                this.rs.close();
-                this.rs = null;
             } else {
                 logDebug("Connected to " + this.conn.getMetaData().getDatabaseProductName() + " / " + this.conn.getMetaData().getDatabaseProductVersion());
             }
         } finally {
             if (this.rs != null) {
                 this.rs.close();
+                this.rs = null;
             }
         }
 
         this.isOnCSFS = !this.conn.getMetaData().storesLowerCaseIdentifiers();
+
+        if (this.sha256Conn != null) {
+            this.sha256Stmt = this.sha256Conn.createStatement();
+
+            try {
+                if (sha256Url.indexOf("mysql") != -1) {
+                    this.sha256Rs = this.sha256Stmt.executeQuery("SELECT VERSION()");
+                    this.sha256Rs.next();
+                    logDebug("Connected to " + this.sha256Rs.getString(1));
+                } else {
+                    logDebug("Connected to " + this.sha256Conn.getMetaData().getDatabaseProductName() + " / "
+                            + this.sha256Conn.getMetaData().getDatabaseProductVersion());
+                }
+            } finally {
+                if (this.sha256Rs != null) {
+                    this.sha256Rs.close();
+                    this.sha256Rs = null;
+                }
+            }
+        }
     }
 
     /**
@@ -527,20 +655,52 @@ public abstract class BaseTestCase extends TestCase {
             }
         }
 
-        if (System.getProperty("com.mysql.jdbc.testsuite.retainArtifacts") == null) {
-            for (int i = 0; i < this.createdObjects.size(); i++) {
-                try {
-                    String[] objectInfo = this.createdObjects.get(i);
+        if (this.sha256Rs != null) {
+            try {
+                this.sha256Rs.close();
+            } catch (SQLException SQLE) {
+            }
+        }
 
-                    dropSchemaObject(objectInfo[0], objectInfo[1]);
+        if (System.getProperty("com.mysql.jdbc.testsuite.retainArtifacts") == null) {
+            Statement st = this.conn == null || this.conn.isClosed() ? getNewConnection().createStatement() : this.conn.createStatement();
+            Statement sha256st;
+            if (this.sha256Conn == null || this.sha256Conn.isClosed()) {
+                Connection c = getNewSha256Connection();
+                sha256st = c == null ? null : c.createStatement();
+            } else {
+                sha256st = this.sha256Conn.createStatement();
+            }
+
+            for (int i = 0; i < this.createdObjects.size(); i++) {
+                String[] objectInfo = this.createdObjects.get(i);
+
+                try {
+                    dropSchemaObject(st, objectInfo[0], objectInfo[1]);
                 } catch (SQLException SQLE) {
                 }
+
+                try {
+                    dropSchemaObject(sha256st, objectInfo[0], objectInfo[1]);
+                } catch (SQLException SQLE) {
+                }
+            }
+            st.close();
+            if (sha256st != null) {
+                sha256st.close();
             }
         }
 
         if (this.stmt != null) {
             try {
                 this.stmt.close();
+            } catch (SQLException SQLE) {
+            }
+        }
+
+        if (this.sha256Stmt != null) {
+            try {
+                this.sha256Stmt.close();
             } catch (SQLException SQLE) {
             }
         }
@@ -555,6 +715,13 @@ public abstract class BaseTestCase extends TestCase {
         if (this.conn != null) {
             try {
                 this.conn.close();
+            } catch (SQLException SQLE) {
+            }
+        }
+
+        if (this.sha256Conn != null) {
+            try {
+                this.sha256Conn.close();
             } catch (SQLException SQLE) {
             }
         }
@@ -610,8 +777,24 @@ public abstract class BaseTestCase extends TestCase {
         return Util.isEnterpriseEdition(((MySQLConnection) this.conn).getServerVersion());
     }
 
-    protected boolean isRunningOnJdk131() {
-        return this.runningOnJdk131;
+    /**
+     * Checks whether all requirements to connect using SSL are met for the default connection
+     */
+    protected boolean requiresSSLCipherSuitesCustomization() throws SQLException {
+        return requiresSSLCipherSuitesCustomization(this.conn);
+    }
+
+    /**
+     * Checks whether all requirements to connect using SSL are met for the given connection
+     * - MySQL 5.5.45+
+     * - MySQL 5.6.26+ (community edition)
+     * - MySQL 5.7.6+ (community edition)
+     */
+    protected boolean requiresSSLCipherSuitesCustomization(Connection c) throws SQLException {
+        MySQLConnection myConn = (MySQLConnection) c;
+        return Util.getJVMVersion() < 8
+                && (myConn.versionMeetsMinimum(5, 5, 45) && !myConn.versionMeetsMinimum(5, 6, 0) || Util.isCommunityEdition(myConn.getServerVersion())
+                        && (myConn.versionMeetsMinimum(5, 6, 26) && !myConn.versionMeetsMinimum(5, 7, 0) || myConn.versionMeetsMinimum(5, 7, 6)));
     }
 
     protected boolean isClassAvailable(String classname) {
@@ -798,7 +981,7 @@ public abstract class BaseTestCase extends TestCase {
      * Retrieve the current system time in milliseconds, using the nanosecond
      * time if possible.
      */
-    protected long currentTimeMillis() {
+    protected static final long currentTimeMillis() {
         try {
             Method mNanoTime = System.class.getDeclaredMethod("nanoTime", (Class[]) null);
             return ((Long) mNanoTime.invoke(null, (Object[]) null)).longValue() / 1000000;
@@ -808,10 +991,11 @@ public abstract class BaseTestCase extends TestCase {
     }
 
     protected Connection getMasterSlaveReplicationConnection() throws SQLException {
+        return getMasterSlaveReplicationConnection(null);
+    }
 
-        Connection replConn = new ReplicationDriver().connect(getMasterSlaveUrl(), getMasterSlaveProps());
-
-        return replConn;
+    protected Connection getMasterSlaveReplicationConnection(Properties props) throws SQLException {
+        return new ReplicationDriver().connect(getMasterSlaveUrl(), getMasterSlaveProps(props));
     }
 
     protected String getMasterSlaveUrl() throws SQLException {
@@ -846,11 +1030,16 @@ public abstract class BaseTestCase extends TestCase {
     }
 
     protected Properties getMasterSlaveProps() throws SQLException {
-        Properties props = getPropertiesFromTestsuiteUrl();
+        return getMasterSlaveProps(null);
+    }
 
-        removeHostRelatedProps(props);
-
-        return props;
+    protected Properties getMasterSlaveProps(Properties props) throws SQLException {
+        Properties parsedProps = getPropertiesFromTestsuiteUrl();
+        if (props != null) {
+            parsedProps.putAll(props);
+        }
+        removeHostRelatedProps(parsedProps);
+        return parsedProps;
     }
 
     protected void removeHostRelatedProps(Properties props) {

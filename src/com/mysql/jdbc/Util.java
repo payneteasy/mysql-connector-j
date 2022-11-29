@@ -4,7 +4,7 @@
   The MySQL Connector/J is licensed under the terms of the GPLv2
   <http://www.gnu.org/licenses/old-licenses/gpl-2.0.html>, like most MySQL Connectors.
   There are special exceptions to the terms and conditions of the GPLv2 as it is applied to
-  this software, see the FLOSS License Exception
+  this software, see the FOSS License Exception
   <http://www.mysql.com/about/legal/licensing/foss-exception.html>.
 
   This program is free software; you can redistribute it and/or modify it under the terms
@@ -29,7 +29,6 @@ import java.io.StringWriter;
 import java.io.UnsupportedEncodingException;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.nio.charset.Charset;
@@ -49,8 +48,6 @@ import java.util.concurrent.ConcurrentMap;
  * Various utility methods for the driver.
  */
 public class Util {
-    private static Method CAST_METHOD;
-
     class RandStructcture {
         long maxValue;
 
@@ -63,7 +60,9 @@ public class Util {
 
     private static Util enclosingInstance = new Util();
 
-    private static boolean isJdbc4 = false;
+    private static boolean isJdbc4;
+
+    private static boolean isJdbc42;
 
     private static int jvmVersion = -1;
 
@@ -71,16 +70,17 @@ public class Util {
 
     static {
         try {
-            CAST_METHOD = Class.class.getMethod("cast", new Class[] { Object.class });
-        } catch (Throwable t) {
-            // ignore - not available in this VM
+            Class.forName("java.sql.NClob");
+            isJdbc4 = true;
+        } catch (ClassNotFoundException e) {
+            isJdbc4 = false;
         }
 
         try {
-            Class.forName("java.sql.NClob");
-            isJdbc4 = true;
+            Class.forName("java.sql.JDBCType");
+            isJdbc42 = true;
         } catch (Throwable t) {
-            isJdbc4 = false;
+            isJdbc42 = false;
         }
 
         String jvmVersionString = System.getProperty("java.version");
@@ -96,7 +96,7 @@ public class Util {
             jvmVersion = Integer.parseInt(jvmVersionString.substring(startPos, endPos));
         } else {
             // use best approximate value
-            jvmVersion = isJdbc4 ? 6 : 5;
+            jvmVersion = isJdbc42 ? 8 : isJdbc4 ? 6 : 5;
         }
 
         //
@@ -116,6 +116,10 @@ public class Util {
 
     public static boolean isJdbc4() {
         return isJdbc4;
+    }
+
+    public static boolean isJdbc42() {
+        return isJdbc42;
     }
 
     public static int getJVMVersion() {
@@ -436,26 +440,6 @@ public class Util {
         }
     }
 
-    /**
-     * Reflexive access on JDK-1.5's Class.cast() method so we don't have to
-     * move that out into separate classes built for JDBC-4.0.
-     * 
-     * @param invokeOn
-     * @param toCast
-     * @return
-     */
-    public static Object cast(Object invokeOn, Object toCast) {
-        if (CAST_METHOD != null) {
-            try {
-                return CAST_METHOD.invoke(invokeOn, new Object[] { toCast });
-            } catch (Throwable t) {
-                return null;
-            }
-        }
-
-        return null;
-    }
-
     @SuppressWarnings({ "rawtypes", "unchecked" })
     public static void resultSetToMap(Map mappedValues, java.sql.ResultSet rs) throws SQLException {
         while (rs.next()) {
@@ -576,24 +560,21 @@ public class Util {
             return (Util.isJdbcInterfaceCache.get(clazz));
         }
 
-        for (Class<?> iface : clazz.getInterfaces()) {
-            String packageName = null;
+        if (clazz.isInterface()) {
             try {
-                packageName = iface.getPackage().getName();
+                if (isJdbcPackage(clazz.getPackage().getName())) {
+                    Util.isJdbcInterfaceCache.putIfAbsent(clazz, true);
+                    return true;
+                }
             } catch (Exception ex) {
                 /*
                  * We may experience a NPE from getPackage() returning null, or class-loading facilities.
                  * This happens when this class is instrumented to implement runtime-generated interfaces.
                  */
-                continue;
             }
+        }
 
-            if (isJdbcPackage(packageName)) {
-                Util.isJdbcInterfaceCache.putIfAbsent(iface, true);
-                Util.isJdbcInterfaceCache.putIfAbsent(clazz, true);
-                return true;
-            }
-
+        for (Class<?> iface : clazz.getInterfaces()) {
             if (isJdbcInterface(iface)) {
                 Util.isJdbcInterfaceCache.putIfAbsent(clazz, true);
                 return true;
@@ -667,5 +648,30 @@ public class Util {
      */
     public static long secondsSinceMillis(long timeInMillis) {
         return (System.currentTimeMillis() - timeInMillis) / 1000;
+    }
+
+    /**
+     * Converts long to int, truncating to maximum/minimum value if needed.
+     * 
+     * @param longValue
+     * @return
+     */
+    public static int truncateAndConvertToInt(long longValue) {
+        return longValue > Integer.MAX_VALUE ? Integer.MAX_VALUE : longValue < Integer.MIN_VALUE ? Integer.MIN_VALUE : (int) longValue;
+    }
+
+    /**
+     * Converts long[] to int[], truncating to maximum/minimum value if needed.
+     * 
+     * @param longArray
+     * @return
+     */
+    public static int[] truncateAndConvertToInt(long[] longArray) {
+        int[] intArray = new int[longArray.length];
+
+        for (int i = 0; i < longArray.length; i++) {
+            intArray[i] = longArray[i] > Integer.MAX_VALUE ? Integer.MAX_VALUE : longArray[i] < Integer.MIN_VALUE ? Integer.MIN_VALUE : (int) longArray[i];
+        }
+        return intArray;
     }
 }

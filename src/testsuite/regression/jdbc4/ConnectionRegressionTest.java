@@ -4,7 +4,7 @@
   The MySQL Connector/J is licensed under the terms of the GPLv2
   <http://www.gnu.org/licenses/old-licenses/gpl-2.0.html>, like most MySQL Connectors.
   There are special exceptions to the terms and conditions of the GPLv2 as it is applied to
-  this software, see the FLOSS License Exception
+  this software, see the FOSS License Exception
   <http://www.mysql.com/about/legal/licensing/foss-exception.html>.
 
   This program is free software; you can redistribute it and/or modify it under the terms
@@ -26,11 +26,15 @@ package testsuite.regression.jdbc4;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
+import java.sql.SQLNonTransientException;
+import java.sql.SQLTransientException;
 import java.sql.Statement;
 import java.util.Properties;
 import java.util.concurrent.Callable;
 
 import com.mysql.jdbc.Messages;
+import com.mysql.jdbc.MysqlErrorNumbers;
+import com.mysql.jdbc.SQLError;
 import com.mysql.jdbc.Util;
 
 import javax.sql.PooledConnection;
@@ -128,7 +132,10 @@ public class ConnectionRegressionTest extends BaseTestCase {
      *             if the test fails.
      */
     public void testBug20685022() throws Exception {
-        final boolean sslCipherSuitesReqFor576 = Util.getJVMVersion() < 8 && versionMeetsMinimum(5, 7, 6) && isCommunityEdition();
+        if (!isCommunityEdition()) {
+            return;
+        }
+
         final Properties props = new Properties();
         final Callable<Void> callableInstance = new Callable<Void>() {
             public Void call() throws Exception {
@@ -145,10 +152,10 @@ public class ConnectionRegressionTest extends BaseTestCase {
         props.setProperty("requireSSL", "true");
         props.setProperty("verifyServerCertificate", "false");
 
-        if (sslCipherSuitesReqFor576) {
+        if (requiresSSLCipherSuitesCustomization()) {
             assertThrows(SQLException.class, Messages.getString("CommunicationsException.incompatibleSSLCipherSuites"), callableInstance);
 
-            props.setProperty("enabledSSLCipherSuites", SSL_CIPHERS_FOR_576);
+            props.setProperty("enabledSSLCipherSuites", CUSTOM_SSL_CIPHERS);
         }
         getConnectionWithProps(props);
 
@@ -163,10 +170,10 @@ public class ConnectionRegressionTest extends BaseTestCase {
         props.setProperty("trustCertificateKeyStoreType", "JKS");
         props.setProperty("trustCertificateKeyStorePassword", "password");
 
-        if (sslCipherSuitesReqFor576) {
+        if (requiresSSLCipherSuitesCustomization()) {
             assertThrows(SQLException.class, Messages.getString("CommunicationsException.incompatibleSSLCipherSuites"), callableInstance);
 
-            props.setProperty("enabledSSLCipherSuites", SSL_CIPHERS_FOR_576);
+            props.setProperty("enabledSSLCipherSuites", CUSTOM_SSL_CIPHERS);
         }
 
         getConnectionWithProps(props);
@@ -185,10 +192,10 @@ public class ConnectionRegressionTest extends BaseTestCase {
         System.setProperty("javax.net.ssl.trustStore", trustStorePath);
         System.setProperty("javax.net.ssl.trustStorePassword", "password");
 
-        if (sslCipherSuitesReqFor576) {
+        if (requiresSSLCipherSuitesCustomization()) {
             assertThrows(SQLException.class, Messages.getString("CommunicationsException.incompatibleSSLCipherSuites"), callableInstance);
 
-            props.setProperty("enabledSSLCipherSuites", SSL_CIPHERS_FOR_576);
+            props.setProperty("enabledSSLCipherSuites", CUSTOM_SSL_CIPHERS);
         }
 
         getConnectionWithProps(props);
@@ -207,7 +214,7 @@ public class ConnectionRegressionTest extends BaseTestCase {
         con = pds.getPooledConnection();
         assertTrue(con instanceof JDBC4MysqlPooledConnection);
         testBug62452WithConnection(con);
-        
+
         MysqlXADataSource xads = new MysqlXADataSource();
         xads.setUrl(dbUrl);
 
@@ -225,11 +232,52 @@ public class ConnectionRegressionTest extends BaseTestCase {
 
     private void testBug62452WithConnection(PooledConnection con) throws Exception {
         this.pstmt = con.getConnection().prepareStatement("SELECT 1");
-        this.rs = this.pstmt.executeQuery();           
+        this.rs = this.pstmt.executeQuery();
         con.close();
 
         // If PooledConnection is already closed by some reason a NullPointerException was thrown on the next line
         // because the closed connection has nulled out the list that it synchronises on when the closed event is fired.
         this.pstmt.close();
+    }
+
+    /**
+     * Tests fix for Bug#16634180 - LOCK WAIT TIMEOUT EXCEEDED CAUSES SQLEXCEPTION, SHOULD CAUSE SQLTRANSIENTEXCEPTION
+     * 
+     * @throws Exception
+     *             if the test fails.
+     */
+    public void testBug16634180() throws Exception {
+
+        createTable("testBug16634180", "(pk integer primary key, val integer)", "InnoDB");
+        this.stmt.executeUpdate("insert into testBug16634180 values(0,0)");
+
+        Connection c1 = null;
+        Connection c2 = null;
+
+        try {
+            c1 = getConnectionWithProps(new Properties());
+            c1.setAutoCommit(false);
+            Statement s1 = c1.createStatement();
+            s1.executeUpdate("update testBug16634180 set val=val+1 where pk=0");
+
+            c2 = getConnectionWithProps(new Properties());
+            c2.setAutoCommit(false);
+            Statement s2 = c2.createStatement();
+            try {
+                s2.executeUpdate("update testBug16634180 set val=val+1 where pk=0");
+                fail("ER_LOCK_WAIT_TIMEOUT should be thrown.");
+            } catch (SQLTransientException ex) {
+                assertEquals(MysqlErrorNumbers.ER_LOCK_WAIT_TIMEOUT, ex.getErrorCode());
+                assertEquals(SQLError.SQL_STATE_ROLLBACK_SERIALIZATION_FAILURE, ex.getSQLState());
+                assertEquals("Lock wait timeout exceeded; try restarting transaction", ex.getMessage());
+            }
+        } finally {
+            if (c1 != null) {
+                c1.close();
+            }
+            if (c2 != null) {
+                c2.close();
+            }
+        }
     }
 }

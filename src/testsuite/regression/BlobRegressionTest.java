@@ -4,7 +4,7 @@
   The MySQL Connector/J is licensed under the terms of the GPLv2
   <http://www.gnu.org/licenses/old-licenses/gpl-2.0.html>, like most MySQL Connectors.
   There are special exceptions to the terms and conditions of the GPLv2 as it is applied to
-  this software, see the FLOSS License Exception
+  this software, see the FOSS License Exception
   <http://www.mysql.com/about/legal/licensing/foss-exception.html>.
 
   This program is free software; you can redistribute it and/or modify it under the terms
@@ -66,44 +66,40 @@ public class BlobRegressionTest extends BaseTestCase {
      * @throws Exception
      */
     public void testBug2670() throws Exception {
-        if (!isRunningOnJdk131()) {
+        byte[] blobData = new byte[32];
 
-            byte[] blobData = new byte[32];
-
-            for (int i = 0; i < blobData.length; i++) {
-                blobData[i] = 1;
-            }
-
-            createTable("testBug2670", "(blobField LONGBLOB)");
-
-            PreparedStatement pStmt = this.conn.prepareStatement("INSERT INTO testBug2670 (blobField) VALUES (?)");
-            pStmt.setBytes(1, blobData);
-            pStmt.executeUpdate();
-
-            this.rs = this.stmt.executeQuery("SELECT blobField FROM testBug2670");
-            this.rs.next();
-
-            Blob blob = this.rs.getBlob(1);
-
-            //
-            // Test mid-point insertion
-            //
-            blob.setBytes(4, new byte[] { 2, 2, 2, 2 });
-
-            byte[] newBlobData = blob.getBytes(1L, (int) blob.length());
-
-            assertTrue("Blob changed length", blob.length() == blobData.length);
-
-            assertTrue("New data inserted wrongly", ((newBlobData[3] == 2) && (newBlobData[4] == 2) && (newBlobData[5] == 2) && (newBlobData[6] == 2)));
-
-            //
-            // Test end-point insertion
-            //
-            blob.setBytes(32, new byte[] { 2, 2, 2, 2 });
-
-            assertTrue("Blob length should be 3 larger", blob.length() == (blobData.length + 3));
-
+        for (int i = 0; i < blobData.length; i++) {
+            blobData[i] = 1;
         }
+
+        createTable("testBug2670", "(blobField LONGBLOB)");
+
+        PreparedStatement pStmt = this.conn.prepareStatement("INSERT INTO testBug2670 (blobField) VALUES (?)");
+        pStmt.setBytes(1, blobData);
+        pStmt.executeUpdate();
+
+        this.rs = this.stmt.executeQuery("SELECT blobField FROM testBug2670");
+        this.rs.next();
+
+        Blob blob = this.rs.getBlob(1);
+
+        //
+        // Test mid-point insertion
+        //
+        blob.setBytes(4, new byte[] { 2, 2, 2, 2 });
+
+        byte[] newBlobData = blob.getBytes(1L, (int) blob.length());
+
+        assertTrue("Blob changed length", blob.length() == blobData.length);
+
+        assertTrue("New data inserted wrongly", ((newBlobData[3] == 2) && (newBlobData[4] == 2) && (newBlobData[5] == 2) && (newBlobData[6] == 2)));
+
+        //
+        // Test end-point insertion
+        //
+        blob.setBytes(32, new byte[] { 2, 2, 2, 2 });
+
+        assertTrue("Blob length should be 3 larger", blob.length() == (blobData.length + 3));
     }
 
     /**
@@ -210,66 +206,63 @@ public class BlobRegressionTest extends BaseTestCase {
      *             if the test fails.
      */
     public void testBug8096() throws Exception {
-        if (!isRunningOnJdk131()) {
-            int dataSize = 256;
+        int dataSize = 256;
 
-            Properties props = new Properties();
-            props.setProperty("emulateLocators", "true");
-            Connection locatorConn = getConnectionWithProps(props);
+        Properties props = new Properties();
+        props.setProperty("emulateLocators", "true");
+        Connection locatorConn = getConnectionWithProps(props);
 
-            String select = "SELECT ID, 'DATA' AS BLOB_DATA FROM testBug8096 WHERE ID = ?";
-            String insert = "INSERT INTO testBug8096 (ID, DATA) VALUES (?, '')";
+        String select = "SELECT ID, 'DATA' AS BLOB_DATA FROM testBug8096 WHERE ID = ?";
+        String insert = "INSERT INTO testBug8096 (ID, DATA) VALUES (?, '')";
 
-            String id = "1";
-            byte[] testData = new byte[dataSize];
+        String id = "1";
+        byte[] testData = new byte[dataSize];
 
-            for (int i = 0; i < testData.length; i++) {
-                testData[i] = (byte) i;
+        for (int i = 0; i < testData.length; i++) {
+            testData[i] = (byte) i;
+        }
+
+        createTable("testBug8096", "(ID VARCHAR(10) PRIMARY KEY, DATA LONGBLOB)");
+        this.pstmt = locatorConn.prepareStatement(insert);
+        this.pstmt.setString(1, id);
+        this.pstmt.execute();
+
+        this.pstmt = locatorConn.prepareStatement(select);
+        this.pstmt.setString(1, id);
+
+        this.rs = this.pstmt.executeQuery();
+
+        if (this.rs.next()) {
+            Blob b = this.rs.getBlob("BLOB_DATA");
+            b.setBytes(1, testData);
+        }
+
+        this.rs.close();
+        this.pstmt.close();
+
+        this.pstmt = locatorConn.prepareStatement(select);
+        this.pstmt.setString(1, id);
+
+        this.rs = this.pstmt.executeQuery();
+
+        byte[] result = null;
+        if (this.rs.next()) {
+            Blob b = this.rs.getBlob("BLOB_DATA");
+
+            result = b.getBytes(1, dataSize - 1);
+        }
+
+        this.rs.close();
+        this.pstmt.close();
+
+        assertNotNull(result);
+
+        for (int i = 0; i < result.length && i < testData.length; i++) {
+            // Will print out all of the values that don't match.
+            // All negative values will instead be replaced with 63.
+            if (result[i] != testData[i]) {
+                assertEquals("At position " + i, testData[i], result[i]);
             }
-
-            createTable("testBug8096", "(ID VARCHAR(10) PRIMARY KEY, DATA LONGBLOB)");
-            this.pstmt = locatorConn.prepareStatement(insert);
-            this.pstmt.setString(1, id);
-            this.pstmt.execute();
-
-            this.pstmt = locatorConn.prepareStatement(select);
-            this.pstmt.setString(1, id);
-
-            this.rs = this.pstmt.executeQuery();
-
-            if (this.rs.next()) {
-                Blob b = this.rs.getBlob("BLOB_DATA");
-                b.setBytes(1, testData);
-            }
-
-            this.rs.close();
-            this.pstmt.close();
-
-            this.pstmt = locatorConn.prepareStatement(select);
-            this.pstmt.setString(1, id);
-
-            this.rs = this.pstmt.executeQuery();
-
-            byte[] result = null;
-            if (this.rs.next()) {
-                Blob b = this.rs.getBlob("BLOB_DATA");
-
-                result = b.getBytes(1, dataSize - 1);
-            }
-
-            this.rs.close();
-            this.pstmt.close();
-
-            assertNotNull(result);
-
-            for (int i = 0; i < result.length && i < testData.length; i++) {
-                // Will print out all of the values that don't match.
-                // All negative values will instead be replaced with 63.
-                if (result[i] != testData[i]) {
-                    assertEquals("At position " + i, testData[i], result[i]);
-                }
-            }
-
         }
     }
 

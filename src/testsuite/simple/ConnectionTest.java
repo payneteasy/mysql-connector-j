@@ -4,7 +4,7 @@
   The MySQL Connector/J is licensed under the terms of the GPLv2
   <http://www.gnu.org/licenses/old-licenses/gpl-2.0.html>, like most MySQL Connectors.
   There are special exceptions to the terms and conditions of the GPLv2 as it is applied to
-  this software, see the FLOSS License Exception
+  this software, see the FOSS License Exception
   <http://www.mysql.com/about/legal/licensing/foss-exception.html>.
 
   This program is free software; you can redistribute it and/or modify it under the terms
@@ -46,6 +46,7 @@ import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.sql.Savepoint;
 import java.sql.Statement;
+import java.sql.Timestamp;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Enumeration;
@@ -53,11 +54,13 @@ import java.util.List;
 import java.util.Properties;
 import java.util.TimeZone;
 
+import testsuite.BaseStatementInterceptor;
 import testsuite.BaseTestCase;
 
 import com.mysql.jdbc.CharsetMapping;
 import com.mysql.jdbc.MySQLConnection;
 import com.mysql.jdbc.NonRegisteringDriver;
+import com.mysql.jdbc.ResultSetInternalMethods;
 import com.mysql.jdbc.SQLError;
 import com.mysql.jdbc.StringUtils;
 import com.mysql.jdbc.Util;
@@ -214,7 +217,7 @@ public class ConnectionTest extends BaseTestCase {
             //
             // Check whether the driver thinks it really is deadlock...
             //
-            assertTrue(SQLError.SQL_STATE_DEADLOCK.equals(sqlEx.getSQLState()));
+            assertTrue(SQLError.SQL_STATE_ROLLBACK_SERIALIZATION_FAILURE.equals(sqlEx.getSQLState()));
             assertTrue(sqlEx.getErrorCode() == 1205);
             // Make sure INNODB Status is getting dumped into error message
 
@@ -552,60 +555,58 @@ public class ConnectionTest extends BaseTestCase {
      *             if an error occurs.
      */
     public void testSavepoint() throws Exception {
-        if (!isRunningOnJdk131()) {
-            DatabaseMetaData dbmd = this.conn.getMetaData();
+        DatabaseMetaData dbmd = this.conn.getMetaData();
 
-            if (dbmd.supportsSavepoints()) {
-                System.out.println("Testing SAVEPOINTs");
+        if (dbmd.supportsSavepoints()) {
+            System.out.println("Testing SAVEPOINTs");
 
-                try {
-                    this.conn.setAutoCommit(true);
+            try {
+                this.conn.setAutoCommit(true);
 
-                    createTable("testSavepoints", "(field1 int)", "InnoDB");
+                createTable("testSavepoints", "(field1 int)", "InnoDB");
 
-                    // Try with named save points
-                    this.conn.setAutoCommit(false);
-                    this.stmt.executeUpdate("INSERT INTO testSavepoints VALUES (1)");
+                // Try with named save points
+                this.conn.setAutoCommit(false);
+                this.stmt.executeUpdate("INSERT INTO testSavepoints VALUES (1)");
 
-                    Savepoint afterInsert = this.conn.setSavepoint("afterInsert");
-                    this.stmt.executeUpdate("UPDATE testSavepoints SET field1=2");
+                Savepoint afterInsert = this.conn.setSavepoint("afterInsert");
+                this.stmt.executeUpdate("UPDATE testSavepoints SET field1=2");
 
-                    Savepoint afterUpdate = this.conn.setSavepoint("afterUpdate");
-                    this.stmt.executeUpdate("DELETE FROM testSavepoints");
+                Savepoint afterUpdate = this.conn.setSavepoint("afterUpdate");
+                this.stmt.executeUpdate("DELETE FROM testSavepoints");
 
-                    assertTrue("Row count should be 0", getRowCount("testSavepoints") == 0);
-                    this.conn.rollback(afterUpdate);
-                    assertTrue("Row count should be 1", getRowCount("testSavepoints") == 1);
-                    assertTrue("Value should be 2", "2".equals(getSingleValue("testSavepoints", "field1", null).toString()));
-                    this.conn.rollback(afterInsert);
-                    assertTrue("Value should be 1", "1".equals(getSingleValue("testSavepoints", "field1", null).toString()));
-                    this.conn.rollback();
-                    assertTrue("Row count should be 0", getRowCount("testSavepoints") == 0);
+                assertTrue("Row count should be 0", getRowCount("testSavepoints") == 0);
+                this.conn.rollback(afterUpdate);
+                assertTrue("Row count should be 1", getRowCount("testSavepoints") == 1);
+                assertTrue("Value should be 2", "2".equals(getSingleValue("testSavepoints", "field1", null).toString()));
+                this.conn.rollback(afterInsert);
+                assertTrue("Value should be 1", "1".equals(getSingleValue("testSavepoints", "field1", null).toString()));
+                this.conn.rollback();
+                assertTrue("Row count should be 0", getRowCount("testSavepoints") == 0);
 
-                    // Try with 'anonymous' save points
-                    this.conn.rollback();
+                // Try with 'anonymous' save points
+                this.conn.rollback();
 
-                    this.stmt.executeUpdate("INSERT INTO testSavepoints VALUES (1)");
-                    afterInsert = this.conn.setSavepoint();
-                    this.stmt.executeUpdate("UPDATE testSavepoints SET field1=2");
-                    afterUpdate = this.conn.setSavepoint();
-                    this.stmt.executeUpdate("DELETE FROM testSavepoints");
+                this.stmt.executeUpdate("INSERT INTO testSavepoints VALUES (1)");
+                afterInsert = this.conn.setSavepoint();
+                this.stmt.executeUpdate("UPDATE testSavepoints SET field1=2");
+                afterUpdate = this.conn.setSavepoint();
+                this.stmt.executeUpdate("DELETE FROM testSavepoints");
 
-                    assertTrue("Row count should be 0", getRowCount("testSavepoints") == 0);
-                    this.conn.rollback(afterUpdate);
-                    assertTrue("Row count should be 1", getRowCount("testSavepoints") == 1);
-                    assertTrue("Value should be 2", "2".equals(getSingleValue("testSavepoints", "field1", null).toString()));
-                    this.conn.rollback(afterInsert);
-                    assertTrue("Value should be 1", "1".equals(getSingleValue("testSavepoints", "field1", null).toString()));
-                    this.conn.rollback();
+                assertTrue("Row count should be 0", getRowCount("testSavepoints") == 0);
+                this.conn.rollback(afterUpdate);
+                assertTrue("Row count should be 1", getRowCount("testSavepoints") == 1);
+                assertTrue("Value should be 2", "2".equals(getSingleValue("testSavepoints", "field1", null).toString()));
+                this.conn.rollback(afterInsert);
+                assertTrue("Value should be 1", "1".equals(getSingleValue("testSavepoints", "field1", null).toString()));
+                this.conn.rollback();
 
-                    this.conn.releaseSavepoint(this.conn.setSavepoint());
-                } finally {
-                    this.conn.setAutoCommit(true);
-                }
-            } else {
-                System.out.println("MySQL version does not support SAVEPOINTs");
+                this.conn.releaseSavepoint(this.conn.setSavepoint());
+            } finally {
+                this.conn.setAutoCommit(true);
             }
+        } else {
+            System.out.println("MySQL version does not support SAVEPOINTs");
         }
     }
 
@@ -1214,10 +1215,6 @@ public class ConnectionTest extends BaseTestCase {
      *             interfaces to make an outgoing connection to the server.
      */
     public void testLocalSocketAddress() throws Exception {
-        if (isRunningOnJdk131()) {
-            return;
-        }
-
         Enumeration<NetworkInterface> allInterfaces = NetworkInterface.getNetworkInterfaces();
 
         SpawnedWorkerCounter counter = new SpawnedWorkerCounter();
@@ -1467,7 +1464,9 @@ public class ConnectionTest extends BaseTestCase {
 
             String classname = "com.mysql.jdbc.ServerPreparedStatement";
 
-            if (Util.isJdbc4()) {
+            if (Util.isJdbc42()) {
+                classname = "com.mysql.jdbc.JDBC42ServerPreparedStatement";
+            } else if (Util.isJdbc4()) {
                 classname = "com.mysql.jdbc.JDBC4ServerPreparedStatement";
             }
 
@@ -1552,8 +1551,8 @@ public class ConnectionTest extends BaseTestCase {
         props.setProperty("useSSL", "true");
         props.setProperty("verifyServerCertificate", "false");
         props.setProperty("requireSSL", "true");
-        if (Util.getJVMVersion() < 8 && versionMeetsMinimum(5, 7, 6) && isCommunityEdition()) {
-            props.setProperty("enabledSSLCipherSuites", SSL_CIPHERS_FOR_576);
+        if (requiresSSLCipherSuitesCustomization()) {
+            props.setProperty("enabledSSLCipherSuites", CUSTOM_SSL_CIPHERS);
         }
         getConnectionWithProps(props);
     }
@@ -1855,6 +1854,97 @@ public class ConnectionTest extends BaseTestCase {
             } finally {
                 TimeZone.setDefault(defaultTZ);
             }
+        }
+    }
+
+    /**
+     * Test the new connection property 'enableEscapeProcessing', as well as the old connection property 'processEscapeCodesForPrepStmts' and interrelation
+     * between both.
+     * 
+     * This test uses a StatementInterceptor to capture the query sent to the server and assert whether escape processing has been done in the client side or if
+     * the query is sent untouched and escape processing will be done at server side, according to provided connection properties and type of Statement objects
+     * in use.
+     */
+    public void testEnableEscapeProcessing() throws Exception {
+        // make sure the connection string doesn't contain 'enableEscapeProcessing'
+        String testUrl = BaseTestCase.dbUrl;
+        int b = testUrl.indexOf("enableEscapeProcessing");
+        if (b != -1) {
+            int e = testUrl.indexOf('&', b);
+            if (e == -1) {
+                e = testUrl.length();
+                b--;
+            } else {
+                e++;
+            }
+            testUrl = testUrl.substring(0, b) + testUrl.substring(e, testUrl.length());
+        }
+        String query = "SELECT /* testEnableEscapeProcessing: (%d) */ {fn sin(pi()/2)}, {ts '2015-08-16 11:22:33'}, {fn ucase('this is mysql')}";
+        Timestamp testTimestamp = new Timestamp(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").parse("2015-08-16 11:22:33").getTime());
+
+        for (int tst = 0; tst < 8; tst++) {
+            boolean enableEscapeProcessing = (tst & 0x1) != 0;
+            boolean processEscapeCodesForPrepStmts = (tst & 0x2) != 0;
+            boolean useServerPrepStmts = (tst & 0x4) != 0;
+
+            Properties props = new Properties();
+            props.setProperty("statementInterceptors", TestEnableEscapeProcessingStatementInterceptor.class.getName());
+            props.setProperty("enableEscapeProcessing", Boolean.toString(enableEscapeProcessing));
+            props.setProperty("processEscapeCodesForPrepStmts", Boolean.toString(processEscapeCodesForPrepStmts));
+            props.setProperty("useServerPrepStmts", Boolean.toString(useServerPrepStmts));
+
+            Connection testConn = getConnectionWithProps(testUrl, props);
+            this.stmt = testConn.createStatement();
+            this.rs = this.stmt.executeQuery(String.format(query, tst));
+
+            String testCase = String.format("Case: %d [ %s | %s | %s ]/Statement", tst, enableEscapeProcessing ? "enEscProc" : "-",
+                    processEscapeCodesForPrepStmts ? "procEscProcPS" : "-", useServerPrepStmts ? "useSSPS" : "-");
+            assertTrue(testCase, this.rs.next());
+            assertEquals(testCase, 1d, this.rs.getDouble(1));
+            assertEquals(testCase, testTimestamp, this.rs.getTimestamp(2));
+            assertEquals(testCase, "THIS IS MYSQL", this.rs.getString(3));
+            assertFalse(testCase, this.rs.next());
+
+            this.pstmt = testConn.prepareStatement(String.format(query, tst));
+            this.rs = this.pstmt.executeQuery();
+
+            testCase = String.format("Case: %d [ %s | %s | %s ]/PreparedStatement", tst, enableEscapeProcessing ? "enEscProc" : "-",
+                    processEscapeCodesForPrepStmts ? "procEscProcPS" : "-", useServerPrepStmts ? "useSSPS" : "-");
+            assertTrue(testCase, this.rs.next());
+            assertEquals(testCase, 1d, this.rs.getDouble(1));
+            assertEquals(testCase, testTimestamp, this.rs.getTimestamp(2));
+            assertEquals(testCase, "THIS IS MYSQL", this.rs.getString(3));
+            assertFalse(testCase, this.rs.next());
+
+            testConn.close();
+        }
+    }
+
+    public static class TestEnableEscapeProcessingStatementInterceptor extends BaseStatementInterceptor {
+        @Override
+        public ResultSetInternalMethods preProcess(String sql, com.mysql.jdbc.Statement interceptedStatement, com.mysql.jdbc.Connection connection)
+                throws SQLException {
+            if (sql == null && interceptedStatement instanceof com.mysql.jdbc.PreparedStatement) {
+                sql = ((com.mysql.jdbc.PreparedStatement) interceptedStatement).asSql();
+            }
+
+            int p;
+            if (sql != null && (p = sql.indexOf("testEnableEscapeProcessing:")) != -1) {
+                int tst = Integer.parseInt(sql.substring(sql.indexOf('(', p) + 1, sql.indexOf(')', p)));
+                boolean enableEscapeProcessing = (tst & 0x1) != 0;
+                boolean processEscapeCodesForPrepStmts = (tst & 0x2) != 0;
+                boolean useServerPrepStmts = (tst & 0x4) != 0;
+                boolean isPreparedStatement = interceptedStatement instanceof PreparedStatement;
+
+                String testCase = String.format("Case: %d [ %s | %s | %s ]/%s", tst, enableEscapeProcessing ? "enEscProc" : "-",
+                        processEscapeCodesForPrepStmts ? "procEscProcPS" : "-", useServerPrepStmts ? "useSSPS" : "-", isPreparedStatement ? "PreparedStatement"
+                                : "Statement");
+
+                boolean escapeProcessingDone = sql.indexOf('{') == -1;
+                assertTrue(testCase, isPreparedStatement && processEscapeCodesForPrepStmts == escapeProcessingDone || !isPreparedStatement
+                        && enableEscapeProcessing == escapeProcessingDone);
+            }
+            return super.preProcess(sql, interceptedStatement, connection);
         }
     }
 }

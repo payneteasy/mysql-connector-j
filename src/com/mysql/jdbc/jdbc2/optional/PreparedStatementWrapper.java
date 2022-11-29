@@ -1,10 +1,10 @@
 /*
-  Copyright (c) 2002, 2014, Oracle and/or its affiliates. All rights reserved.
+  Copyright (c) 2002, 2015, Oracle and/or its affiliates. All rights reserved.
 
   The MySQL Connector/J is licensed under the terms of the GPLv2
   <http://www.gnu.org/licenses/old-licenses/gpl-2.0.html>, like most MySQL Connectors.
   There are special exceptions to the terms and conditions of the GPLv2 as it is applied to
-  this software, see the FLOSS License Exception
+  this software, see the FOSS License Exception
   <http://www.mysql.com/about/legal/licensing/foss-exception.html>.
 
   This program is free software; you can redistribute it and/or modify it under the terms
@@ -54,7 +54,9 @@ public class PreparedStatementWrapper extends StatementWrapper implements Prepar
     static {
         if (Util.isJdbc4()) {
             try {
-                JDBC_4_PREPARED_STATEMENT_WRAPPER_CTOR = Class.forName("com.mysql.jdbc.jdbc2.optional.JDBC4PreparedStatementWrapper").getConstructor(
+                String jdbc4ClassName = Util.isJdbc42() ? "com.mysql.jdbc.jdbc2.optional.JDBC42PreparedStatementWrapper"
+                        : "com.mysql.jdbc.jdbc2.optional.JDBC4PreparedStatementWrapper";
+                JDBC_4_PREPARED_STATEMENT_WRAPPER_CTOR = Class.forName(jdbc4ClassName).getConstructor(
                         new Class[] { ConnectionWrapper.class, MysqlPooledConnection.class, PreparedStatement.class });
             } catch (SecurityException e) {
                 throw new RuntimeException(e);
@@ -685,10 +687,7 @@ public class PreparedStatementWrapper extends StatementWrapper implements Prepar
             checkAndFireConnectionError(sqlEx);
         }
 
-        return false; // we actually never get here, but the compiler can't
-        // figure
-
-        // that out
+        return false; // we actually never get here, but the compiler can't figure that out
     }
 
     /*
@@ -711,10 +710,7 @@ public class PreparedStatementWrapper extends StatementWrapper implements Prepar
             checkAndFireConnectionError(sqlEx);
         }
 
-        return null; // we actually never get here, but the compiler can't
-        // figure
-
-        // that out
+        return null; // we actually never get here, but the compiler can't figure that out
     }
 
     /*
@@ -733,9 +729,7 @@ public class PreparedStatementWrapper extends StatementWrapper implements Prepar
             checkAndFireConnectionError(sqlEx);
         }
 
-        return -1; // we actually never get here, but the compiler can't figure
-
-        // that out
+        return -1; // we actually never get here, but the compiler can't figure that out
     }
 
     @Override
@@ -753,6 +747,7 @@ public class PreparedStatementWrapper extends StatementWrapper implements Prepar
 
         return buf.toString();
     }
+
     //
     //	public void setAsciiStream(int parameterIndex, InputStream x)
     //			throws SQLException {
@@ -1085,10 +1080,27 @@ public class PreparedStatementWrapper extends StatementWrapper implements Prepar
     //	}
     //
     //	public boolean isWrapperFor(Class arg0) throws SQLException {
-    //		throw SQLError.notImplemented();
+    //		throw SQLError.createSQLFeatureNotSupportedException();
     //	}
     //
     //	public Object unwrap(Class arg0) throws SQLException {
-    //		throw SQLError.notImplemented();
+    //		throw SQLError.createSQLFeatureNotSupportedException();
     //	}
+
+    /**
+     * Same as PreparedStatement.executeUpdate() but returns long instead of int.
+     */
+    public long executeLargeUpdate() throws SQLException {
+        try {
+            if (this.wrappedStmt != null) {
+                return ((com.mysql.jdbc.PreparedStatement) this.wrappedStmt).executeLargeUpdate();
+            }
+
+            throw SQLError.createSQLException("No operations allowed after statement closed", SQLError.SQL_STATE_GENERAL_ERROR, this.exceptionInterceptor);
+        } catch (SQLException sqlEx) {
+            checkAndFireConnectionError(sqlEx);
+        }
+
+        return -1; // we actually never get here, but the compiler can't figure that out
+    }
 }

@@ -4,7 +4,7 @@
   The MySQL Connector/J is licensed under the terms of the GPLv2
   <http://www.gnu.org/licenses/old-licenses/gpl-2.0.html>, like most MySQL Connectors.
   There are special exceptions to the terms and conditions of the GPLv2 as it is applied to
-  this software, see the FLOSS License Exception
+  this software, see the FOSS License Exception
   <http://www.mysql.com/about/legal/licensing/foss-exception.html>.
 
   This program is free software; you can redistribute it and/or modify it under the terms
@@ -40,6 +40,7 @@ import com.mysql.jdbc.ResultSetImpl;
 import com.mysql.jdbc.Statement;
 import com.mysql.jdbc.StatementImpl;
 import com.mysql.jdbc.Util;
+import com.mysql.jdbc.Wrapper;
 
 public class UtilsTest extends BaseTestCase {
     /**
@@ -114,8 +115,11 @@ public class UtilsTest extends BaseTestCase {
     public void testGetImplementedInterfaces() throws Exception {
         Class<?>[] ifaces;
         ifaces = Util.getImplementedInterfaces(Statement.class);
-        assertEquals(1, ifaces.length);
-        assertEquals(ifaces[0], java.sql.Statement.class);
+        assertEquals(2, ifaces.length);
+        List<Class<?>> ifacesList = Arrays.asList(ifaces);
+        for (Class<?> clazz : new Class<?>[] { java.sql.Statement.class, Wrapper.class }) {
+            assertTrue(ifacesList.contains(clazz));
+        }
 
         ifaces = Util.getImplementedInterfaces(StatementImpl.class);
         assertEquals(1, ifaces.length);
@@ -123,7 +127,7 @@ public class UtilsTest extends BaseTestCase {
 
         ifaces = Util.getImplementedInterfaces(ConnectionImpl.class);
         assertEquals(3, ifaces.length);
-        List<Class<?>> ifacesList = Arrays.asList(ifaces);
+        ifacesList = Arrays.asList(ifaces);
         for (Class<?> clazz : new Class<?>[] { MySQLConnection.class, Serializable.class, ConnectionProperties.class }) {
             assertTrue(ifacesList.contains(clazz));
         }
