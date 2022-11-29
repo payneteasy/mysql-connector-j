@@ -1114,7 +1114,7 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements j
      */
     protected boolean checkReadOnlySafeStatement() throws SQLException {
         synchronized (checkClosed().getConnectionMutex()) {
-            return this.firstCharOfStmt == 'S' || !this.connection.isReadOnly();
+            return this.firstCharOfStmt == 'S' || !this.connection.isReadOnly() || (this.connection.isReadOnly() && (this.firstCharOfStmt == 'C' || this.firstCharOfStmt == 'c'));
         }
     }
 
