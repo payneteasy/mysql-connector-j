@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2014, Oracle and/or its affiliates. All rights reserved.
+  Copyright (c) 2015, Oracle and/or its affiliates. All rights reserved.
 
   The MySQL Connector/J is licensed under the terms of the GPLv2
   <http://www.gnu.org/licenses/old-licenses/gpl-2.0.html>, like most MySQL Connectors.
@@ -21,30 +21,35 @@
 
  */
 
-package com.mysql.jdbc;
+package testsuite;
 
-import java.net.InetSocketAddress;
-import java.net.Proxy;
-import java.net.Socket;
+import java.sql.SQLException;
 import java.util.Properties;
 
-/**
- * A socket factory used to create sockets connecting through a SOCKS proxy. The socket still supports all the same TCP features as the "standard" socket.
- */
-public class SocksProxySocketFactory extends StandardSocketFactory {
-    public static int SOCKS_DEFAULT_PORT = 1080;
+import com.mysql.jdbc.Connection;
+import com.mysql.jdbc.ResultSetInternalMethods;
+import com.mysql.jdbc.Statement;
+import com.mysql.jdbc.StatementInterceptorV2;
 
-    @Override
-    protected Socket createSocket(Properties props) {
-        String socksProxyHost = props.getProperty("socksProxyHost");
-        String socksProxyPortString = props.getProperty("socksProxyPort", String.valueOf(SOCKS_DEFAULT_PORT));
-        int socksProxyPort = SOCKS_DEFAULT_PORT;
-        try {
-            socksProxyPort = Integer.valueOf(socksProxyPortString);
-        } catch (NumberFormatException ex) {
-            // ignore. fall back to default
-        }
+public class BaseStatementInterceptor implements StatementInterceptorV2 {
 
-        return new Socket(new Proxy(Proxy.Type.SOCKS, new InetSocketAddress(socksProxyHost, socksProxyPort)));
+    public void init(Connection conn, Properties props) throws SQLException {
     }
+
+    public ResultSetInternalMethods preProcess(String sql, Statement interceptedStatement, Connection connection) throws SQLException {
+        return null;
+    }
+
+    public boolean executeTopLevelOnly() {
+        return false;
+    }
+
+    public void destroy() {
+    }
+
+    public ResultSetInternalMethods postProcess(String sql, Statement interceptedStatement, ResultSetInternalMethods originalResultSet, Connection connection,
+            int warningCount, boolean noIndexUsed, boolean noGoodIndexUsed, SQLException statementException) throws SQLException {
+        return originalResultSet;
+    }
+
 }

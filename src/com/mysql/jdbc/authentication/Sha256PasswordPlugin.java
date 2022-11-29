@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2012, 2014, Oracle and/or its affiliates. All rights reserved.
+  Copyright (c) 2012, 2015, Oracle and/or its affiliates. All rights reserved.
 
   The MySQL Connector/J is licensed under the terms of the GPLv2
   <http://www.gnu.org/licenses/old-licenses/gpl-2.0.html>, like most MySQL Connectors.
@@ -27,6 +27,7 @@ import java.io.BufferedInputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
+import java.io.UnsupportedEncodingException;
 import java.sql.SQLException;
 import java.util.List;
 import java.util.Properties;
@@ -37,6 +38,7 @@ import com.mysql.jdbc.Connection;
 import com.mysql.jdbc.ExportControlled;
 import com.mysql.jdbc.Messages;
 import com.mysql.jdbc.MySQLConnection;
+import com.mysql.jdbc.MysqlIO;
 import com.mysql.jdbc.SQLError;
 import com.mysql.jdbc.Security;
 import com.mysql.jdbc.StringUtils;
@@ -87,13 +89,20 @@ public class Sha256PasswordPlugin implements AuthenticationPlugin {
         toServer.clear();
 
         if (this.password == null || this.password.length() == 0 || fromServer == null) {
-            // no password or changeUser()
+            // no password
             Buffer bresp = new Buffer(new byte[] { 0 });
             toServer.add(bresp);
 
         } else if (((MySQLConnection) this.connection).getIO().isSSLEstablished()) {
             // allow plain text over SSL
-            Buffer bresp = new Buffer(StringUtils.getBytes(this.password));
+            Buffer bresp;
+            try {
+                bresp = new Buffer(StringUtils.getBytes(this.password, this.connection.getPasswordCharacterEncoding()));
+            } catch (UnsupportedEncodingException e) {
+                throw SQLError.createSQLException(
+                        Messages.getString("Sha256PasswordPlugin.3", new Object[] { this.connection.getPasswordCharacterEncoding() }),
+                        SQLError.SQL_STATE_GENERAL_ERROR, null);
+            }
             bresp.setPosition(bresp.getBufLength());
             int oldBufLength = bresp.getBufLength();
             bresp.writeByte((byte) 0);
@@ -114,7 +123,10 @@ public class Sha256PasswordPlugin implements AuthenticationPlugin {
             }
 
             // We must request the public key from the server to encrypt the password
-            if (this.publicKeyRequested) {
+            if (this.publicKeyRequested && fromServer.getBufLength() > MysqlIO.SEED_LENGTH) {
+                // Servers affected by Bug#70865 could send Auth Switch instead of key after Public Key Retrieval,
+                // so we check payload length to detect that.
+
                 // read key response
                 Buffer bresp = new Buffer(encryptPassword(this.password, this.seed, this.connection, fromServer.readString()));
                 toServer.add(bresp);
@@ -131,7 +143,13 @@ public class Sha256PasswordPlugin implements AuthenticationPlugin {
     }
 
     private static byte[] encryptPassword(String password, String seed, Connection connection, String key) throws SQLException {
-        byte[] input = StringUtils.getBytesNullTerminated(password != null ? password : "");
+        byte[] input = null;
+        try {
+            input = password != null ? StringUtils.getBytesNullTerminated(password, connection.getPasswordCharacterEncoding()) : new byte[] { 0 };
+        } catch (UnsupportedEncodingException e) {
+            throw SQLError.createSQLException(Messages.getString("Sha256PasswordPlugin.3", new Object[] { connection.getPasswordCharacterEncoding() }),
+                    SQLError.SQL_STATE_GENERAL_ERROR, null);
+        }
         byte[] mysqlScrambleBuff = new byte[input.length];
         Security.xorString(input, mysqlScrambleBuff, seed.getBytes(), input.length);
         return ExportControlled.encryptWithRSAPublicKey(mysqlScrambleBuff,

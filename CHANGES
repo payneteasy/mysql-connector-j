@@ -1,5 +1,41 @@
 # Changelog
 # $Id$
+06-30-15 - Version 5.1.36
+
+  - Add test for new syntax 'ALTER TABLE ... DISCARD|IMPORT PARTITION ...' introduced in MySQL 5.7.4.
+
+  - Fix for Bug#20727196, GETPROCEDURECOLUMNS() RETURNS EXCEPTION FOR FUNCTION WHICH RETURNS ENUM/SET TYPE.
+
+  - Fix for Bug#19803348, GETPROCEDURES() RETURNS INCORRECT OUTPUT WHEN USEINFORMATIONSCHEMA=FALSE.
+
+  - Fix for Bug#21215151, DATABASEMETADATA.GETCATALOGS() FAILS TO SORT RESULTS.
+
+  - Fix for Bug#72630 (18758686), NullPointerException during handshake in some situations
+
+  - Fix for Bug#20825727, CONNECT FAILURE WHEN TRY TO CONNECT SHA USER WITH DIFFERENT CHARSET.
+
+  - Flag RowDataDynamic.isInterrupted removed as it isn't needed.
+
+  - Fix for Bug#20518653, XSL FILES IN PACKAGES
+
+  - Fix for Bug#20804635, GETTIME() AND GETDATE() FUNCTIONS FAILS WHEN FRACTIONAL PART EXISTS
+
+  - Fix for Bug#62452 (16444069), NPE thrown in JDBC4MySQLPooledException when statement is closed.
+
+  - Fix for BUG#70927 (17810800), Connector/J COM_CHANGE_USER handling is broken
+
+  - Fix for Bug#75335 (20283655), Maven artifact for Connector/J is missing source jar.
+
+  - Fix for BUG#75592 (20408891), "SHOW VARIABLES WHERE" is expensive.
+
+  - Fix for Bug#75113 (20821888), Fail in failover of the connection in MySQL fabric
+
+  - Fix for Bug#72077 (18425861), Fabric connection with username to a server with disabled auth throws NPE
+
+  - Add test for already fixed Bug#72546 (18719760), C/J Fabric createGroup() throws ClassCastException
+
+  - Fix for Bug#77217 (21184949), ClassCastException when executing a streaming PreparedStatement with Fabric
+
 03-23-15 - Version 5.1.35
 
   - Fix for Bug#19536760, GETSTRING() CALL AFTER RS.RELATIVE() RETURNS NULLPOINTEREXCEPTION

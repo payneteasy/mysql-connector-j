@@ -2485,7 +2485,7 @@ public class ConnectionPropertiesImpl implements Serializable, ConnectionPropert
         //
         // Check character encoding
         //
-        String testEncoding = this.getEncoding();
+        String testEncoding = ((String) this.characterEncoding.getValueAsObject());
 
         if (testEncoding != null) {
             // Attempt to use the encoding, and bail out if it can't be used
@@ -4591,7 +4591,14 @@ public class ConnectionPropertiesImpl implements Serializable, ConnectionPropert
     }
 
     public String getPasswordCharacterEncoding() {
-        return this.passwordCharacterEncoding.getValueAsString();
+        String encoding;
+        if ((encoding = this.passwordCharacterEncoding.getValueAsString()) != null) {
+            return encoding;
+        }
+        if (getUseUnicode() && (encoding = getEncoding()) != null) {
+            return encoding;
+        }
+        return "UTF-8";
     }
 
     public void setExceptionInterceptors(String exceptionInterceptors) {

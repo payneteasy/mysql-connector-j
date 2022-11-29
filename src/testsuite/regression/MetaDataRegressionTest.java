@@ -45,6 +45,7 @@ import java.util.Map;
 import java.util.Properties;
 
 import junit.framework.ComparisonFailure;
+import testsuite.BaseStatementInterceptor;
 import testsuite.BaseTestCase;
 
 import com.mysql.jdbc.CharsetMapping;
@@ -53,7 +54,6 @@ import com.mysql.jdbc.Driver;
 import com.mysql.jdbc.NonRegisteringDriver;
 import com.mysql.jdbc.ResultSetInternalMethods;
 import com.mysql.jdbc.SQLError;
-import com.mysql.jdbc.StatementInterceptorV2;
 import com.mysql.jdbc.StringUtils;
 import com.mysql.jdbc.Util;
 
@@ -2682,23 +2682,8 @@ public class MetaDataRegressionTest extends BaseTestCase {
         }
     }
 
-    public static class StatementInterceptorBug61332 implements StatementInterceptorV2 {
-        public void destroy() {
-        }
-
-        public boolean executeTopLevelOnly() {
-            return false;
-        }
-
-        public void init(com.mysql.jdbc.Connection conn, Properties props) throws SQLException {
-        }
-
-        public ResultSetInternalMethods postProcess(String sql, com.mysql.jdbc.Statement interceptedStatement, ResultSetInternalMethods originalResultSet,
-                com.mysql.jdbc.Connection connection, int warningCount, boolean noIndexUsed, boolean noGoodIndexUsed, SQLException statementException)
-                throws SQLException {
-            return null;
-        }
-
+    public static class StatementInterceptorBug61332 extends BaseStatementInterceptor {
+        @Override
         public ResultSetInternalMethods preProcess(String sql, com.mysql.jdbc.Statement interceptedStatement, com.mysql.jdbc.Connection conn)
                 throws SQLException {
             if (interceptedStatement instanceof com.mysql.jdbc.PreparedStatement) {
@@ -2708,7 +2693,6 @@ public class MetaDataRegressionTest extends BaseTestCase {
             }
             return null;
         }
-
     }
 
     public void testQuotedGunk() throws Exception {
@@ -3862,14 +3846,16 @@ public class MetaDataRegressionTest extends BaseTestCase {
             // there is a specific JCDB4 test for this
             return;
         }
-        final String mysqlKeywords = "ACCESSIBLE,ANALYZE,ASENSITIVE,BEFORE,BIGINT,BINARY,BLOB,CALL,CHANGE,CONDITION,DATABASE,DATABASES,DAY_HOUR,DAY_MICROSECOND,DAY_MINUTE,"
-                + "DAY_SECOND,DELAYED,DETERMINISTIC,DISTINCTROW,DIV,DUAL,EACH,ELSEIF,ENCLOSED,ESCAPED,EXIT,EXPLAIN,FLOAT4,FLOAT8,FORCE,FULLTEXT,HIGH_PRIORITY,"
-                + "HOUR_MICROSECOND,HOUR_MINUTE,HOUR_SECOND,IF,IGNORE,INDEX,INFILE,INOUT,INT1,INT2,INT3,INT4,INT8,IO_AFTER_GTIDS,IO_BEFORE_GTIDS,ITERATE,KEYS,"
-                + "KILL,LEAVE,LIMIT,LINEAR,LINES,LOAD,LOCALTIME,LOCALTIMESTAMP,LOCK,LONG,LONGBLOB,LONGTEXT,LOOP,LOW_PRIORITY,MASTER_BIND,MASTER_SSL_VERIFY_SERVER_CERT,MAXVALUE,"
-                + "MEDIUMBLOB,MEDIUMINT,MEDIUMTEXT,MIDDLEINT,MINUTE_MICROSECOND,MINUTE_SECOND,MOD,MODIFIES,NONBLOCKING,NO_WRITE_TO_BINLOG,OPTIMIZE,OPTIONALLY,OUT,"
-                + "OUTFILE,PARTITION,PURGE,RANGE,READS,READ_WRITE,REGEXP,RELEASE,RENAME,REPEAT,REPLACE,REQUIRE,RESIGNAL,RETURN,RLIKE,SCHEMAS,SECOND_MICROSECOND,SENSITIVE,SEPARATOR,"
-                + "SHOW,SIGNAL,SPATIAL,SPECIFIC,SQLEXCEPTION,SQLWARNING,SQL_BIG_RESULT,SQL_CALC_FOUND_ROWS,SQL_SMALL_RESULT,SSL,STARTING,STRAIGHT_JOIN,TERMINATED,TINYBLOB,TINYINT,TINYTEXT,TRIGGER,"
-                + "UNDO,UNLOCK,UNSIGNED,USE,UTC_DATE,UTC_TIME,UTC_TIMESTAMP,VARBINARY,VARCHARACTER,WHILE,XOR,YEAR_MONTH,ZEROFILL";
+        final String mysqlKeywords = "ACCESSIBLE,ANALYZE,ASENSITIVE,BEFORE,BIGINT,BINARY,BLOB,CALL,CHANGE,CONDITION,DATABASE,DATABASES,DAY_HOUR,"
+                + "DAY_MICROSECOND,DAY_MINUTE,DAY_SECOND,DELAYED,DETERMINISTIC,DISTINCTROW,DIV,DUAL,EACH,ELSEIF,ENCLOSED,ESCAPED,EXIT,EXPLAIN,FLOAT4,FLOAT8,"
+                + "FORCE,FULLTEXT,GENERATED,HIGH_PRIORITY,HOUR_MICROSECOND,HOUR_MINUTE,HOUR_SECOND,IF,IGNORE,INDEX,INFILE,INOUT,INT1,INT2,INT3,INT4,INT8,"
+                + "IO_AFTER_GTIDS,IO_BEFORE_GTIDS,ITERATE,KEYS,KILL,LEAVE,LIMIT,LINEAR,LINES,LOAD,LOCALTIME,LOCALTIMESTAMP,LOCK,LONG,LONGBLOB,LONGTEXT,LOOP,"
+                + "LOW_PRIORITY,MASTER_BIND,MASTER_SSL_VERIFY_SERVER_CERT,MAXVALUE,MEDIUMBLOB,MEDIUMINT,MEDIUMTEXT,MIDDLEINT,MINUTE_MICROSECOND,MINUTE_SECOND,"
+                + "MOD,MODIFIES,NO_WRITE_TO_BINLOG,OPTIMIZE,OPTIMIZER_COSTS,OPTIONALLY,OUT,OUTFILE,PARSE_GCOL_EXPR,PARTITION,PURGE,RANGE,READS,READ_WRITE,"
+                + "REGEXP,RELEASE,RENAME,REPEAT,REPLACE,REQUIRE,RESIGNAL,RETURN,RLIKE,SCHEMAS,SECOND_MICROSECOND,SENSITIVE,SEPARATOR,SHOW,SIGNAL,SPATIAL,"
+                + "SPECIFIC,SQLEXCEPTION,SQLWARNING,SQL_BIG_RESULT,SQL_CALC_FOUND_ROWS,SQL_SMALL_RESULT,SSL,STARTING,STORED,STRAIGHT_JOIN,TERMINATED,TINYBLOB,"
+                + "TINYINT,TINYTEXT,TRIGGER,UNDO,UNLOCK,UNSIGNED,USE,UTC_DATE,UTC_TIME,UTC_TIMESTAMP,VARBINARY,VARCHARACTER,VIRTUAL,WHILE,XOR,YEAR_MONTH,"
+                + "ZEROFILL";
         assertEquals("MySQL keywords don't match expected.", mysqlKeywords, this.conn.getMetaData().getSQLKeywords());
     }
 
@@ -3957,6 +3943,226 @@ public class MetaDataRegressionTest extends BaseTestCase {
                 }
             } finally {
                 testConn.close();
+            }
+        }
+    }
+
+    /**
+     * Tests fix for BUG#21215151 - DATABASEMETADATA.GETCATALOGS() FAILS TO SORT RESULTS.
+     * 
+     * DatabaseMetaData.GetCatalogs() relies on the results of 'SHOW DATABASES' which deliver a sorted list of databases except for 'information_schema' which
+     * is always returned in the first position.
+     * This test creates set of databases around the relative position of 'information_schema' and checks the ordering of the final ResultSet.
+     * 
+     * @throws Exception
+     *             if the test fails.
+     */
+    public void testBug21215151() throws Exception {
+        createDatabase("z_testBug21215151");
+        createDatabase("j_testBug21215151");
+        createDatabase("h_testBug21215151");
+        createDatabase("i_testBug21215151");
+        createDatabase("a_testBug21215151");
+
+        DatabaseMetaData dbmd = this.conn.getMetaData();
+        this.rs = dbmd.getCatalogs();
+
+        System.out.println("Catalogs:");
+        System.out.println("--------------------------------------------------");
+        while (this.rs.next()) {
+            System.out.println("\t" + this.rs.getString(1));
+        }
+        this.rs.beforeFirst();
+
+        // check the relative position of each element in the result set compared to the previous element.
+        String previousDb = "";
+        while (this.rs.next()) {
+            assertTrue(
+                    "'" + this.rs.getString(1) + "' is lexicographically lower than the previous catalog. Check the system output to see the catalogs list.",
+                    previousDb.compareTo(this.rs.getString(1)) < 0);
+            previousDb = this.rs.getString(1);
+        }
+    }
+
+    /**
+     * Tests fix for BUG#19803348 - GETPROCEDURES() RETURNS INCORRECT O/P WHEN USEINFORMATIONSCHEMA=FALSE.
+     * 
+     * Composed by two parts:
+     * 1. Confirm that getProcedures() and getProcedureColumns() aren't returning more results than expected (as per reported bug).
+     * 2. Confirm that the results from getProcedures() and getProcedureColumns() are in the right order (secondary bug).
+     * 
+     * Test duplicated in testsuite.regression.jdbc4.MetaDataRegressionTest.
+     * 
+     * @throws Exception
+     *             if the test fails.
+     */
+    public void testBug19803348() throws Exception {
+        Connection testConn = null;
+        try {
+            testConn = getConnectionWithProps("useInformationSchema=false,nullCatalogMeansCurrent=false");
+            DatabaseMetaData dbmd = testConn.getMetaData();
+
+            String testDb1 = "testBug19803348_db1";
+            String testDb2 = "testBug19803348_db2";
+
+            if (!dbmd.supportsMixedCaseIdentifiers()) {
+                testDb1 = testDb1.toLowerCase();
+                testDb2 = testDb2.toLowerCase();
+            }
+
+            createDatabase(testDb1);
+            createDatabase(testDb2);
+
+            // 1. Check if getProcedures() and getProcedureColumns() aren't returning more results than expected (as per reported bug).
+            createFunction(testDb1 + ".testBug19803348_f", "(d INT) RETURNS INT BEGIN RETURN d; END");
+            createProcedure(testDb1 + ".testBug19803348_p", "(d int) BEGIN SELECT d; END");
+
+            this.rs = dbmd.getProcedures(null, null, "testBug19803348_%");
+            assertTrue(this.rs.next());
+            assertEquals(testDb1, this.rs.getString(1));
+            assertEquals("testBug19803348_f", this.rs.getString(3));
+            assertTrue(this.rs.next());
+            assertEquals(testDb1, this.rs.getString(1));
+            assertEquals("testBug19803348_p", this.rs.getString(3));
+            assertFalse(this.rs.next());
+
+            this.rs = dbmd.getProcedureColumns(null, null, "testBug19803348_%", "%");
+            assertTrue(this.rs.next());
+            assertEquals(testDb1, this.rs.getString(1));
+            assertEquals("testBug19803348_f", this.rs.getString(3));
+            assertEquals("", this.rs.getString(4));
+            assertTrue(this.rs.next());
+            assertEquals(testDb1, this.rs.getString(1));
+            assertEquals("testBug19803348_f", this.rs.getString(3));
+            assertEquals("d", this.rs.getString(4));
+            assertTrue(this.rs.next());
+            assertEquals(testDb1, this.rs.getString(1));
+            assertEquals("testBug19803348_p", this.rs.getString(3));
+            assertEquals("d", this.rs.getString(4));
+            assertFalse(this.rs.next());
+
+            dropFunction(testDb1 + ".testBug19803348_f");
+            dropProcedure(testDb1 + ".testBug19803348_p");
+
+            // 2. Check if the results from getProcedures() and getProcedureColumns() are in the right order (secondary bug).
+            createFunction(testDb1 + ".testBug19803348_B_f", "(d INT) RETURNS INT BEGIN RETURN d; END");
+            createProcedure(testDb1 + ".testBug19803348_B_p", "(d int) BEGIN SELECT d; END");
+            createFunction(testDb2 + ".testBug19803348_A_f", "(d INT) RETURNS INT BEGIN RETURN d; END");
+            createProcedure(testDb2 + ".testBug19803348_A_p", "(d int) BEGIN SELECT d; END");
+
+            this.rs = dbmd.getProcedures(null, null, "testBug19803348_%");
+            assertTrue(this.rs.next());
+            assertEquals(testDb1, this.rs.getString(1));
+            assertEquals("testBug19803348_B_f", this.rs.getString(3));
+            assertTrue(this.rs.next());
+            assertEquals(testDb1, this.rs.getString(1));
+            assertEquals("testBug19803348_B_p", this.rs.getString(3));
+            assertTrue(this.rs.next());
+            assertEquals(testDb2, this.rs.getString(1));
+            assertEquals("testBug19803348_A_f", this.rs.getString(3));
+            assertTrue(this.rs.next());
+            assertEquals(testDb2, this.rs.getString(1));
+            assertEquals("testBug19803348_A_p", this.rs.getString(3));
+            assertFalse(this.rs.next());
+
+            this.rs = dbmd.getProcedureColumns(null, null, "testBug19803348_%", "%");
+            assertTrue(this.rs.next());
+            assertEquals(testDb1, this.rs.getString(1));
+            assertEquals("testBug19803348_B_f", this.rs.getString(3));
+            assertEquals("", this.rs.getString(4));
+            assertTrue(this.rs.next());
+            assertEquals(testDb1, this.rs.getString(1));
+            assertEquals("testBug19803348_B_f", this.rs.getString(3));
+            assertEquals("d", this.rs.getString(4));
+            assertTrue(this.rs.next());
+            assertEquals(testDb1, this.rs.getString(1));
+            assertEquals("testBug19803348_B_p", this.rs.getString(3));
+            assertEquals("d", this.rs.getString(4));
+            assertTrue(this.rs.next());
+            assertEquals(testDb2, this.rs.getString(1));
+            assertEquals("testBug19803348_A_f", this.rs.getString(3));
+            assertEquals("", this.rs.getString(4));
+            assertTrue(this.rs.next());
+            assertEquals(testDb2, this.rs.getString(1));
+            assertEquals("testBug19803348_A_f", this.rs.getString(3));
+            assertEquals("d", this.rs.getString(4));
+            assertTrue(this.rs.next());
+            assertEquals(testDb2, this.rs.getString(1));
+            assertEquals("testBug19803348_A_p", this.rs.getString(3));
+            assertEquals("d", this.rs.getString(4));
+            assertFalse(this.rs.next());
+
+        } finally {
+            if (testConn != null) {
+                testConn.close();
+            }
+        }
+    }
+
+    /**
+     * Tests fix for BUG#20727196 - GETPROCEDURECOLUMNS() RETURNS EXCEPTION FOR FUNCTION WHICH RETURNS ENUM/SET TYPE.
+     * 
+     * Test duplicated in testsuite.regression.jdbc4.MetaDataRegressionTest.
+     * 
+     * @throws Exception
+     *             if the test fails.
+     */
+    public void testBug20727196() throws Exception {
+        createFunction("testBug20727196_f1", "(p ENUM ('Yes', 'No')) RETURNS VARCHAR(10) BEGIN RETURN IF(p='Yes', 'Yay!', if(p='No', 'Ney!', 'What?')); END");
+        createFunction("testBug20727196_f2", "(p CHAR(1)) RETURNS ENUM ('Yes', 'No') BEGIN RETURN IF(p='y', 'Yes', if(p='n', 'No', '?')); END");
+        createFunction("testBug20727196_f3", "(p ENUM ('Yes', 'No')) RETURNS ENUM ('Yes', 'No') BEGIN RETURN IF(p='Yes', 'Yes', if(p='No', 'No', '?')); END");
+        createProcedure("testBug20727196_p1", "(p ENUM ('Yes', 'No')) BEGIN SELECT IF(p='Yes', 'Yay!', if(p='No', 'Ney!', 'What?')); END");
+
+        for (String connProps : new String[] { "useInformationSchema=false", "useInformationSchema=true" }) {
+
+            Connection testConn = null;
+            try {
+                testConn = getConnectionWithProps(connProps);
+                DatabaseMetaData dbmd = testConn.getMetaData();
+
+                this.rs = dbmd.getProcedureColumns(null, null, "testBug20727196_%", "%");
+
+                // testBug20727196_f1 columns:
+                assertTrue(this.rs.next());
+                assertEquals("testBug20727196_f1", this.rs.getString(3));
+                assertEquals("", this.rs.getString(4));
+                assertEquals("VARCHAR", this.rs.getString(7));
+                assertTrue(this.rs.next());
+                assertEquals("testBug20727196_f1", this.rs.getString(3));
+                assertEquals("p", this.rs.getString(4));
+                assertEquals("ENUM", this.rs.getString(7));
+
+                // testBug20727196_f2 columns:
+                assertTrue(this.rs.next());
+                assertEquals("testBug20727196_f2", this.rs.getString(3));
+                assertEquals("", this.rs.getString(4));
+                assertEquals("ENUM", this.rs.getString(7));
+                assertTrue(this.rs.next());
+                assertEquals("testBug20727196_f2", this.rs.getString(3));
+                assertEquals("p", this.rs.getString(4));
+                assertEquals("CHAR", this.rs.getString(7));
+
+                // testBug20727196_f3 columns:
+                assertTrue(this.rs.next());
+                assertEquals("testBug20727196_f3", this.rs.getString(3));
+                assertEquals("", this.rs.getString(4));
+                assertEquals("ENUM", this.rs.getString(7));
+                assertTrue(this.rs.next());
+                assertEquals("testBug20727196_f3", this.rs.getString(3));
+                assertEquals("p", this.rs.getString(4));
+                assertEquals("ENUM", this.rs.getString(7));
+
+                // testBug20727196_p1 columns:
+                assertTrue(this.rs.next());
+                assertEquals("testBug20727196_p1", this.rs.getString(3));
+                assertEquals("p", this.rs.getString(4));
+                assertEquals("ENUM", this.rs.getString(7));
+
+                assertFalse(this.rs.next());
+            } finally {
+                if (testConn != null) {
+                    testConn.close();
+                }
             }
         }
     }

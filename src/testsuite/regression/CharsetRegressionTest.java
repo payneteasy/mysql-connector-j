@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2014, Oracle and/or its affiliates. All rights reserved.
+  Copyright (c) 2014, 2015, Oracle and/or its affiliates. All rights reserved.
 
   The MySQL Connector/J is licensed under the terms of the GPLv2
   <http://www.gnu.org/licenses/old-licenses/gpl-2.0.html>, like most MySQL Connectors.
@@ -25,12 +25,13 @@ package testsuite.regression;
 
 import java.sql.SQLException;
 import java.util.Properties;
+import java.util.concurrent.Callable;
 
+import testsuite.BaseStatementInterceptor;
 import testsuite.BaseTestCase;
 
 import com.mysql.jdbc.MySQLConnection;
 import com.mysql.jdbc.ResultSetInternalMethods;
-import com.mysql.jdbc.StatementInterceptorV2;
 
 public class CharsetRegressionTest extends BaseTestCase {
 
@@ -55,7 +56,7 @@ public class CharsetRegressionTest extends BaseTestCase {
         if (collation != null && collation.startsWith("utf8mb4") && "utf8mb4".equals(((MySQLConnection) this.conn).getServerVariable("character_set_server"))) {
             Properties p = new Properties();
             p.setProperty("characterEncoding", "UTF-8");
-            p.setProperty("statementInterceptors", "testsuite.regression.CharsetRegressionTest$Bug73663StatementInterceptor");
+            p.setProperty("statementInterceptors", Bug73663StatementInterceptor.class.getName());
 
             getConnectionWithProps(p);
             // exception will be thrown from the statement interceptor if any "SET NAMES utf8" statement is issued instead of "SET NAMES utf8mb4"
@@ -68,10 +69,8 @@ public class CharsetRegressionTest extends BaseTestCase {
     /**
      * Statement interceptor used to implement preceding test.
      */
-    public static class Bug73663StatementInterceptor implements StatementInterceptorV2 {
-        public void init(com.mysql.jdbc.Connection conn, Properties props) throws SQLException {
-        }
-
+    public static class Bug73663StatementInterceptor extends BaseStatementInterceptor {
+        @Override
         public ResultSetInternalMethods preProcess(String sql, com.mysql.jdbc.Statement interceptedStatement, com.mysql.jdbc.Connection connection)
                 throws SQLException {
             if (sql.contains("SET NAMES utf8") && !sql.contains("utf8mb4")) {
@@ -79,18 +78,46 @@ public class CharsetRegressionTest extends BaseTestCase {
             }
             return null;
         }
+    }
 
-        public boolean executeTopLevelOnly() {
-            return true;
-        }
+    /**
+     * Tests fix for Bug#72630 (18758686), NullPointerException during handshake in some situations
+     * 
+     * @throws Exception
+     */
+    public void testBug72630() throws Exception {
+        // bug is related to authentication plugins, available only in 5.5.7+ 
+        if (versionMeetsMinimum(5, 5, 7)) {
+            try {
+                this.stmt.execute("CREATE USER 'Bug72630User'@'%' IDENTIFIED WITH mysql_native_password AS 'pwd'");
+                this.stmt.execute("GRANT ALL ON *.* TO 'Bug72630User'@'%'");
 
-        public void destroy() {
-        }
+                final Properties props = new Properties();
+                props.setProperty("user", "Bug72630User");
+                props.setProperty("password", "pwd");
+                props.setProperty("characterEncoding", "NonexistentEncoding");
 
-        public ResultSetInternalMethods postProcess(String sql, com.mysql.jdbc.Statement interceptedStatement, ResultSetInternalMethods originalResultSet,
-                com.mysql.jdbc.Connection connection, int warningCount, boolean noIndexUsed, boolean noGoodIndexUsed, SQLException statementException)
-                throws SQLException {
-            return null;
+                assertThrows(SQLException.class, "Unsupported character encoding 'NonexistentEncoding'.", new Callable<Void>() {
+                    public Void call() throws Exception {
+                        getConnectionWithProps(props);
+                        return null;
+                    }
+                });
+
+                props.remove("characterEncoding");
+                props.setProperty("passwordCharacterEncoding", "NonexistentEncoding");
+                assertThrows(SQLException.class,
+                        "Unsupported character encoding 'NonexistentEncoding' for 'passwordCharacterEncoding' or 'characterEncoding'.", new Callable<Void>() {
+                            public Void call() throws Exception {
+                                getConnectionWithProps(props);
+                                return null;
+                            }
+                        });
+            } catch (SQLException e) {
+                e.printStackTrace();
+            } finally {
+                this.stmt.execute("DROP USER 'Bug72630User'@'%'");
+            }
         }
     }
 }

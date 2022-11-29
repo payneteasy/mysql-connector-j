@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2014, Oracle and/or its affiliates. All rights reserved.
+  Copyright (c) 2014, 2015, Oracle and/or its affiliates. All rights reserved.
 
   The MySQL Connector/J is licensed under the terms of the GPLv2
   <http://www.gnu.org/licenses/old-licenses/gpl-2.0.html>, like most MySQL Connectors.
@@ -82,9 +82,9 @@ public class TestRegressions extends BaseFabricTestCase {
             @SuppressWarnings("synthetic-access")
             void test(FabricMySQLDataSource ds) throws Exception {
                 TestRegressions.this.conn = (FabricMySQLConnection) ds.getConnection(TestRegressions.this.username, TestRegressions.this.password);
-                conn.setServerGroupName("fabric_test1_global");
+                TestRegressions.this.conn.setServerGroupName("fabric_test1_global");
 
-                PreparedStatement ps = conn.prepareStatement("select ?");
+                PreparedStatement ps = TestRegressions.this.conn.prepareStatement("select ?");
                 Timestamp ts = new Timestamp(System.currentTimeMillis());
                 ps.setTimestamp(1, ts);
                 ResultSet rs = ps.executeQuery();
@@ -104,5 +104,27 @@ public class TestRegressions extends BaseFabricTestCase {
         new TestBugInternal().test(ds);
         ds.setUseLegacyDatetimeCode(true);
         new TestBugInternal().test(ds);
+    }
+
+    /**
+     * Test Bug#77217 - ClassCastException when executing a PreparedStatement with Fabric (using a streaming result with timeout set)
+     */
+    public void testBug77217() throws Exception {
+        if (!this.isSetForFabricTest) {
+            return;
+        }
+
+        this.conn = (FabricMySQLConnection) getNewDefaultDataSource().getConnection(this.username, this.password);
+        this.conn.setServerGroupName("ha_config1_group");
+
+        PreparedStatement ps = this.conn.prepareStatement("select ? from dual");
+        ps.setFetchSize(Integer.MIN_VALUE);
+        ps.setString(1, "abc");
+        ResultSet rs = ps.executeQuery();
+        rs.next();
+        assertEquals("abc", rs.getString(1));
+        rs.close();
+        ps.close();
+        this.conn.close();
     }
 }

@@ -121,6 +121,11 @@ public class SyntaxRegressionTest extends BaseTestCase {
      * InnoDB: Allow the location of file-per-table tablespaces to be chosen
      * CREATE TABLE ... DATA DIRECTORY = 'absolute/path/to/directory/'
      * 
+     * Notes:
+     * - DATA DIRECTORY option can't be used with temporary tables.
+     * - DATA DIRECTORY and INDEX DIRECTORY can't be used together for InnoDB.
+     * - Using these options result in an 'option ignored' warning for servers below MySQL 5.7.7. This syntax isn't allowed for MySQL 5.7.7 and higher.
+     * 
      * @throws SQLException
      */
     public void testCreateTableDataDirectory() throws SQLException {
@@ -154,9 +159,10 @@ public class SyntaxRegressionTest extends BaseTestCase {
                 createTable("testCreateTableDataDirectorya", "(x VARCHAR(10) NOT NULL DEFAULT '') DATA DIRECTORY = '" + tmpdir + "'");
                 createTable("testCreateTableDataDirectoryb", "(x VARCHAR(10) NOT NULL DEFAULT '') DATA DIRECTORY = '" + tmpdir + separator + "'");
                 this.stmt.executeUpdate("CREATE TEMPORARY TABLE testCreateTableDataDirectoryc (x VARCHAR(10) NOT NULL DEFAULT '') DATA DIRECTORY = '" + tmpdir
-                        + "'");
+                        + (versionMeetsMinimum(5, 7, 7) ? "' ENGINE = MyISAM" : "'"));
                 createTable("testCreateTableDataDirectoryd", "(x VARCHAR(10) NOT NULL DEFAULT '') DATA DIRECTORY = '" + tmpdir + separator
-                        + "' INDEX DIRECTORY = '" + tmpdir + "'");
+                        + "' INDEX DIRECTORY = '" + tmpdir + (versionMeetsMinimum(5, 7, 7) ? "' ENGINE = MyISAM" : "'"));
+
                 this.stmt.executeUpdate("ALTER TABLE testCreateTableDataDirectorya DISCARD TABLESPACE");
 
                 this.pstmt = this.conn.prepareStatement("CREATE TABLE testCreateTableDataDirectorya (x VARCHAR(10) NOT NULL DEFAULT '') DATA DIRECTORY = '"
@@ -867,5 +873,46 @@ public class SyntaxRegressionTest extends BaseTestCase {
         assertEquals("gnitset", this.rs.getString(1));
         assertFalse(this.rs.next());
         this.rs.close();
+    }
+
+    /**
+     * WL#6868 - Support transportable tablespaces for single innodb partition.
+     * 
+     * New syntax introduced in MySQL 5.7.4.
+     * ALTER TABLE t DISCARD PARTITION {p[[,p1]..]|ALL} TABLESPACE;
+     * ALTER TABLE t IMPORT PARTITION {p[[,p1]..]|ALL} TABLESPACE;
+     */
+    public void testDiscardImportPartitions() throws Exception {
+
+        if (!versionMeetsMinimum(5, 7, 4)) {
+            return;
+        }
+
+        createTable("testDiscardImportPartitions",
+                "(id INT) ENGINE = InnoDB PARTITION BY RANGE (id) (PARTITION p1 VALUES LESS THAN (0), PARTITION p2 VALUES LESS THAN MAXVALUE)");
+
+        this.stmt.executeUpdate("INSERT INTO testDiscardImportPartitions VALUES (-3), (-2), (-1), (0), (1), (2), (3)");
+
+        this.rs = this.stmt.executeQuery("CHECK TABLE testDiscardImportPartitions");
+        assertTrue(this.rs.next());
+        assertEquals("status", this.rs.getString(3));
+        assertEquals("OK", this.rs.getString(4));
+        this.rs.close();
+
+        this.stmt.executeUpdate("ALTER TABLE testDiscardImportPartitions DISCARD PARTITION p1 TABLESPACE");
+
+        this.rs = this.stmt.executeQuery("CHECK TABLE testDiscardImportPartitions");
+        assertTrue(this.rs.next());
+        assertEquals("error", this.rs.getString(3));
+        assertEquals("Partition p1 returned error", this.rs.getString(4));
+        this.rs.close();
+
+        assertThrows(SQLException.class, "Tablespace is missing for table .*", new Callable<Void>() {
+            @SuppressWarnings("synthetic-access")
+            public Void call() throws Exception {
+                SyntaxRegressionTest.this.stmt.executeUpdate("ALTER TABLE testDiscardImportPartitions IMPORT PARTITION p1 TABLESPACE");
+                return null;
+            }
+        });
     }
 }
