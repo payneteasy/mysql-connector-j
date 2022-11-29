@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2013, 2016, Oracle and/or its affiliates. All rights reserved.
+  Copyright (c) 2013, 2017, Oracle and/or its affiliates. All rights reserved.
 
   The MySQL Connector/J is licensed under the terms of the GPLv2
   <http://www.gnu.org/licenses/old-licenses/gpl-2.0.html>, like most MySQL Connectors.
@@ -138,6 +138,7 @@ public class FabricMySQLConnectionProxy extends ConnectionPropertiesImpl impleme
     private static final Set<String> replConnGroupLocks = Collections.synchronizedSet(new HashSet<String>());
 
     private static final Class<?> JDBC4_NON_TRANSIENT_CONN_EXCEPTION;
+
     static {
         Class<?> clazz = null;
         try {
@@ -337,8 +338,8 @@ public class FabricMySQLConnectionProxy extends ConnectionPropertiesImpl impleme
             String db = this.database;
             if (shardTable.contains(".")) {
                 String pair[] = shardTable.split("\\.");
-                table = pair[0];
-                db = pair[1];
+                db = pair[0];
+                table = pair[1];
             }
             this.shardMapping = this.fabricConnection.getShardMapping(db, table);
             if (this.shardMapping == null) {
@@ -2957,6 +2958,10 @@ public class FabricMySQLConnectionProxy extends ConnectionPropertiesImpl impleme
         return getActiveMySQLConnectionPassive().lowerCaseTableNames();
     }
 
+    /**
+     * 
+     * @param stmt
+     */
     public void maxRowsChanged(com.mysql.jdbc.Statement stmt) {
     }
 
@@ -2998,6 +3003,11 @@ public class FabricMySQLConnectionProxy extends ConnectionPropertiesImpl impleme
     public void unregisterStatement(com.mysql.jdbc.Statement stmt) {
     }
 
+    /**
+     * 
+     * @param stmt
+     * @throws SQLException
+     */
     public void unsetMaxRows(com.mysql.jdbc.Statement stmt) throws SQLException {
     }
 
@@ -3017,6 +3027,11 @@ public class FabricMySQLConnectionProxy extends ConnectionPropertiesImpl impleme
         return null;
     }
 
+    /**
+     * 
+     * @param name
+     * @return
+     */
     public String getClientInfo(String name) {
         return null;
     }
