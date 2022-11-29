@@ -1,6 +1,24 @@
 # Changelog
 # https://dev.mysql.com/doc/relnotes/connector-j/5.1/en/
 
+Version 5.1.46
+
+  - WL#11629, Change caching_sha2_password padding.
+
+  - Fix for Bug#86741 (26314325), Multi-Host connection with autocommit=0 getAutoCommit maybe wrong.
+
+  - Fix for Bug#27231383, PROVIDE MAVEN-FRIENDLY COMMERCIAL PACKAGES WITHOUT "-BIN".
+
+  - Fix for Bug#26819691, SETTING PACKETDEBUGBUFFERSIZE=0 RESULTS IN CONNECTION FAILURE.
+
+  - WL#11200, Add caching_sha2_password support.
+
+  - Fix for Bug#88227 (27029657), Connector/J 5.1.44 cannot be used against MySQL 5.7.20 without warnings.
+
+  - Fix for Bug#27374581, CONNECTION FAILS WHEN GPL SERVER STARTED WITH TLS-VERSION=TLSV1.2.
+
+  - Fix for Bug#79612 (22362474), CONNECTION ATTRIBUTES LOST WHEN CONNECTING WITHOUT DEFAULT DATABASE.
+
 Version 5.1.45
 
   - Fix for Bug#27131768, NULL POINTER EXCEPTION IN CONNECTION.

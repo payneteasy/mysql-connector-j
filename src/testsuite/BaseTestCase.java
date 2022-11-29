@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2002, 2016, Oracle and/or its affiliates. All rights reserved.
+  Copyright (c) 2002, 2018, Oracle and/or its affiliates. All rights reserved.
 
   The MySQL Connector/J is licensed under the terms of the GPLv2
   <http://www.gnu.org/licenses/old-licenses/gpl-2.0.html>, like most MySQL Connectors.
@@ -36,6 +36,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
+import java.util.Enumeration;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
@@ -439,7 +440,11 @@ public abstract class BaseTestCase extends TestCase {
      *             if parsing fails
      */
     protected Properties getPropertiesFromTestsuiteUrl() throws SQLException {
-        Properties props = new NonRegisteringDriver().parseURL(dbUrl, null);
+        return getPropertiesFromUrl(dbUrl);
+    }
+
+    protected Properties getPropertiesFromUrl(String url) throws SQLException {
+        Properties props = new NonRegisteringDriver().parseURL(url, null);
 
         String hostname = props.getProperty(NonRegisteringDriver.HOST_PROPERTY_KEY);
         if (hostname == null) {
@@ -482,6 +487,28 @@ public abstract class BaseTestCase extends TestCase {
         }
 
         props.remove(NonRegisteringDriver.NUM_HOSTS_PROPERTY_KEY);
+    }
+
+    protected String getNoDbUrl(String url) throws SQLException {
+        Properties props = getPropertiesFromUrl(url);
+        final String host = props.getProperty(NonRegisteringDriver.HOST_PROPERTY_KEY, "localhost");
+        final String port = props.getProperty(NonRegisteringDriver.PORT_PROPERTY_KEY, "3306");
+        props.remove(NonRegisteringDriver.DBNAME_PROPERTY_KEY);
+        removeHostRelatedProps(props);
+
+        final StringBuilder urlBuilder = new StringBuilder("jdbc:mysql://").append(host).append(":").append(port).append("/?");
+
+        Enumeration<Object> keyEnum = props.keys();
+        while (keyEnum.hasMoreElements()) {
+            String key = (String) keyEnum.nextElement();
+            urlBuilder.append(key);
+            urlBuilder.append("=");
+            urlBuilder.append(props.get(key));
+            if (keyEnum.hasMoreElements()) {
+                urlBuilder.append("&");
+            }
+        }
+        return urlBuilder.toString();
     }
 
     protected int getRowCount(String tableName) throws SQLException {
@@ -607,9 +634,10 @@ public abstract class BaseTestCase extends TestCase {
      */
     @Override
     public void setUp() throws Exception {
+        System.out.println("Running test " + getClass().getName() + "#" + getName());
+        System.out.println("################################################################################");
         System.out.println("Loading JDBC driver '" + this.dbClass + "'");
         Class.forName(this.dbClass).newInstance();
-        System.out.println("Done.\n");
         this.createdObjects = new ArrayList<String[]>();
 
         if (this.dbClass.equals("gwe.sql.gweMysqlDriver")) {
@@ -624,17 +652,15 @@ public abstract class BaseTestCase extends TestCase {
             try {
                 Properties props = new Properties();
                 props.setProperty("useSSL", "false"); // testsuite is built upon non-SSL default connection
+                props.setProperty("allowPublicKeyRetrieval", "true");
                 this.conn = DriverManager.getConnection(dbUrl, props);
 
-                props.setProperty("allowPublicKeyRetrieval", "true");
                 this.sha256Conn = sha256Url == null ? null : DriverManager.getConnection(sha256Url, props);
             } catch (Exception ex) {
                 ex.printStackTrace();
                 fail();
             }
         }
-
-        System.out.println("Done.\n");
 
         this.stmt = this.conn.createStatement();
 
