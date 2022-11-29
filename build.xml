@@ -36,7 +36,7 @@
 	<property name="version" value="${major_version}.${minor_version}.${subminor_version}${version_status}"/>
 	<property name="prodName" value="mysql-connector-java"/>
 	<property name="prodDisplayName" value="MySQL Connector Java"/>
-	<property name="snapshot.version" value="-SNAPSHOT" />
+	<property name="snapshot.version" value="-1" />
 	<property name="extra.version" value=""/>
 	<property name="full.version" value="${version}${extra.version}${snapshot.version}"/>
 	<property name="fullProdName" value="${prodName}-${full.version}"/>
@@ -805,7 +805,8 @@ and the full path to the rt.jar from Java-6 with the property &quot;com.mysql.jd
 
 	<target name="compile-driver-jdbc3" depends="init, -clean-output">
 		<javac sourcepath="" srcdir="${buildDir}/${fullProdName}" 
-			destdir="${compiler.output}" 
+			destdir="${compiler.output}"
+			bootclasspath="${com.mysql.jdbc.jdk5.rtjar}"
 			deprecation="off" 
 			debug="${debug.enable}">
 			<include name="**/*.java" />
@@ -885,7 +886,8 @@ and the full path to the rt.jar from Java-6 with the property &quot;com.mysql.jd
 	<target name="compile-testsuite" depends="init, compile-driver">
 		<javac 
 			srcdir="${buildDir}/${fullProdName}" 
-			destdir="${compiler.output}" 
+			destdir="${compiler.output}"
+			bootclasspath="${com.mysql.jdbc.jdk5.rtjar}"
 			deprecation="off" 
 			debug="${debug.enable}"
 			includes="testsuite/**"

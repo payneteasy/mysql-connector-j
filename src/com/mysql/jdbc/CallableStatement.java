@@ -22,6 +22,9 @@
  */
 package com.mysql.jdbc;
 
+import com.mysql.jdbc.cache.CallableStatementInfo;
+import com.mysql.jdbc.cache.CallableStatementKey;
+
 import java.io.InputStream;
 import java.io.Reader;
 import java.io.UnsupportedEncodingException;
@@ -45,6 +48,7 @@ import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Representation of stored procedures for JDBC
@@ -135,7 +139,7 @@ public class CallableStatement extends PreparedStatement implements
 		}
 	}
 
-	protected class CallableStatementParamInfo {
+	public static class CallableStatementParamInfo {
 		String catalogInUse;
 
 		boolean isFunctionCall;
@@ -166,7 +170,7 @@ public class CallableStatement extends PreparedStatement implements
 		 * @param fullParamInfo the metadata for all parameters for this stored 
 		 * procedure or function.
 		 */
-		CallableStatementParamInfo(CallableStatementParamInfo fullParamInfo) {
+		CallableStatementParamInfo(CallableStatementParamInfo fullParamInfo, String originalSql, String currentCatalog, int[] placeholderToParameterIndexMap) {
 			this.nativeSql = originalSql;
 			this.catalogInUse = currentCatalog;
 			isFunctionCall = fullParamInfo.isFunctionCall;
@@ -199,7 +203,7 @@ public class CallableStatement extends PreparedStatement implements
 		}
 		
 		@SuppressWarnings("synthetic-access")
-		CallableStatementParamInfo(java.sql.ResultSet paramTypesRs)
+		CallableStatementParamInfo(java.sql.ResultSet paramTypesRs, String originalSql, String currentCatalog, boolean callingStoredFunction)
 				throws SQLException {
 			boolean hadRows = paramTypesRs.last();
 
@@ -273,7 +277,7 @@ public class CallableStatement extends PreparedStatement implements
 				throw SQLError.createSQLException(
 						Messages.getString("CallableStatement.11") + paramIndex //$NON-NLS-1$
 								+ Messages.getString("CallableStatement.12") + numParameters //$NON-NLS-1$
-								+ Messages.getString("CallableStatement.13"), SQLError.SQL_STATE_ILLEGAL_ARGUMENT, getExceptionInterceptor()); //$NON-NLS-1$
+								+ Messages.getString("CallableStatement.13"), SQLError.SQL_STATE_ILLEGAL_ARGUMENT, null /*getExceptionInterceptor() */); //$NON-NLS-1$
 			}
 		}
 
@@ -382,11 +386,11 @@ public class CallableStatement extends PreparedStatement implements
 
 		CallableStatementParamInfoJDBC3(java.sql.ResultSet paramTypesRs)
 				throws SQLException {
-			super(paramTypesRs);
+			super(paramTypesRs, originalSql, currentCatalog, callingStoredFunction);
 		}
 
 		public CallableStatementParamInfoJDBC3(CallableStatementParamInfo paramInfo) {
-			super(paramInfo);
+			super(paramInfo, originalSql, currentCatalog, placeholderToParameterIndexMap);
 		}
 		
 		/**
@@ -398,7 +402,7 @@ public class CallableStatement extends PreparedStatement implements
 	     * callers can use this method to avoid expensive <code>unwrap</code> calls that may fail. If this method
 	     * returns true then calling <code>unwrap</code> with the same argument should succeed.
 	     *
-	     * @param interfaces a Class defining an interface.
+	     * @param iface a Class defining an interface.
 	     * @return true if this implements the interface or directly or indirectly wraps an object that does.
 	     * @throws java.sql.SQLException  if an error occurs while determining whether this is a wrapper
 	     * for an object with the given interface.
@@ -621,24 +625,37 @@ public class CallableStatement extends PreparedStatement implements
 
 		this.callingStoredFunction = isFunctionCall;
 
-		if (!this.callingStoredFunction) {
-			if (!StringUtils.startsWithIgnoreCaseAndWs(sql, "CALL")) {
-				// not really a stored procedure call
-				fakeParameterTypes(false);
-			} else {
-				determineParameterTypes();
-			}
-			
-			generateParameterMap();
-		} else {
-			determineParameterTypes();
-			generateParameterMap();
-			
-			this.parameterCount += 1;
-		}
-		
+        CallableStatementKey key = new CallableStatementKey(sql, catalog, isFunctionCall);
+        CallableStatementInfo info = CACHE.get(key);
+        if (info != null) {
+            // gets from cache
+            parameterCount = info.parameterCount;
+            paramInfo = info.paramInfo;
+            placeholderToParameterIndexMap = parameterIndexToRsIndex;
+
+        } else {
+            if (!this.callingStoredFunction) {
+                if (!StringUtils.startsWithIgnoreCaseAndWs(sql, "CALL")) {
+                    // not really a stored procedure call
+                    fakeParameterTypes(false);
+                } else {
+                    determineParameterTypes();
+                }
+
+                generateParameterMap();
+            } else {
+                determineParameterTypes();
+                generateParameterMap();
+
+                this.parameterCount += 1;
+            }
+
+            CACHE.put(key, new CallableStatementInfo(parameterCount, paramInfo, placeholderToParameterIndexMap));
+        }
 		this.retrieveGeneratedKeys = true; // not provided for in the JDBC spec
 	}
+
+    private static final ConcurrentHashMap<CallableStatementKey, CallableStatementInfo> CACHE = new ConcurrentHashMap<CallableStatementKey, CallableStatementInfo>(1000);
 
 	/*
 	 * (non-Javadoc)
@@ -898,7 +915,7 @@ public class CallableStatement extends PreparedStatement implements
 				this.paramInfo = new CallableStatementParamInfoJDBC3(
 						paramTypesRs);
 			} else {
-				this.paramInfo = new CallableStatementParamInfo(paramTypesRs);
+				this.paramInfo = new CallableStatementParamInfo(paramTypesRs, originalSql, currentCatalog, callingStoredFunction);
 			}
 		}
 	}

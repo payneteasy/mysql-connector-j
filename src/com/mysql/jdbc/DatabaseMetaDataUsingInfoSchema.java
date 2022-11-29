@@ -52,18 +52,20 @@ public class DatabaseMetaDataUsingInfoSchema extends DatabaseMetaData {
 		
 		this.hasReferentialConstraintsView = 
 			this.conn.versionMeetsMinimum(5, 1, 10);
-		
-		ResultSet rs = null;
-		
-		try {
-			rs = super.getTables("INFORMATION_SCHEMA", null, "PARAMETERS", new String[0]);
-			
-			this.hasParametersView = rs.next();
-		} finally {
-			if (rs != null) {
-				rs.close();
-			}
-		}
+
+       hasParametersView = true;
+
+//		ResultSet rs = null;
+//
+//		try {
+//			rs = super.getTables("INFORMATION_SCHEMA", null, "PARAMETERS", new String[0]);
+//
+//			this.hasParametersView = rs.next();
+//		} finally {
+//			if (rs != null) {
+//				rs.close();
+//			}
+//		}
 	}
 
 	protected ResultSet executeMetadataQuery(java.sql.PreparedStatement pStmt)

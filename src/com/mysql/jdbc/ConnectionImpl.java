@@ -85,6 +85,8 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements
 
 	private static final long serialVersionUID = 2877471301981509474L;
 
+  private static final boolean ENABLE_AUTOCOMMIT = false;
+
 	private static final SQLPermission SET_NETWORK_TIMEOUT_PERM = new SQLPermission("setNetworkTimeout");
 	
 	private static final SQLPermission ABORT_PERM = new SQLPermission("abort");
@@ -5342,7 +5344,7 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements
 					// so the value holds across connections
 					this.autoCommit = autoCommitFlag;
 	
-					if (needsSetOnServer) {
+					if (needsSetOnServer && ENABLE_AUTOCOMMIT) {
 						execSQL(null, autoCommitFlag ? "SET autocommit=1"
 								: "SET autocommit=0", -1, null,
 								DEFAULT_RESULT_SET_TYPE,
