@@ -32,6 +32,8 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.PrintStream;
 import java.lang.management.ManagementFactory;
+import java.lang.management.ThreadInfo;
+import java.lang.management.ThreadMXBean;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
@@ -54,6 +56,7 @@ import java.sql.Statement;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Calendar;
+import java.util.Collections;
 import java.util.Date;
 import java.util.Enumeration;
 import java.util.HashMap;
@@ -76,6 +79,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -87,10 +91,7 @@ import javax.transaction.xa.XAException;
 import javax.transaction.xa.XAResource;
 import javax.transaction.xa.Xid;
 
-import testsuite.BaseStatementInterceptor;
-import testsuite.BaseTestCase;
-import testsuite.UnreliableSocketFactory;
-
+import com.mysql.fabric.jdbc.ErrorReportingExceptionInterceptor;
 import com.mysql.jdbc.AuthenticationPlugin;
 import com.mysql.jdbc.Buffer;
 import com.mysql.jdbc.CharsetMapping;
@@ -99,7 +100,7 @@ import com.mysql.jdbc.ConnectionProperties;
 import com.mysql.jdbc.Driver;
 import com.mysql.jdbc.ExceptionInterceptor;
 import com.mysql.jdbc.LoadBalanceExceptionChecker;
-import com.mysql.jdbc.LoadBalancingConnectionProxy;
+import com.mysql.jdbc.LoadBalancedConnectionProxy;
 import com.mysql.jdbc.Messages;
 import com.mysql.jdbc.MySQLConnection;
 import com.mysql.jdbc.MysqlDataTruncation;
@@ -107,9 +108,12 @@ import com.mysql.jdbc.MysqlErrorNumbers;
 import com.mysql.jdbc.NonRegisteringDriver;
 import com.mysql.jdbc.RandomBalanceStrategy;
 import com.mysql.jdbc.ReplicationConnection;
+import com.mysql.jdbc.ReplicationConnectionGroup;
 import com.mysql.jdbc.ReplicationConnectionGroupManager;
+import com.mysql.jdbc.ReplicationConnectionProxy;
 import com.mysql.jdbc.ResultSetInternalMethods;
 import com.mysql.jdbc.SQLError;
+import com.mysql.jdbc.SocketMetadata;
 import com.mysql.jdbc.StandardSocketFactory;
 import com.mysql.jdbc.StringUtils;
 import com.mysql.jdbc.TimeUtil;
@@ -125,6 +129,10 @@ import com.mysql.jdbc.jdbc2.optional.MysqlXid;
 import com.mysql.jdbc.jdbc2.optional.SuspendableXAConnection;
 import com.mysql.jdbc.jmx.ReplicationGroupManagerMBean;
 import com.mysql.jdbc.log.StandardLogger;
+
+import testsuite.BaseStatementInterceptor;
+import testsuite.BaseTestCase;
+import testsuite.UnreliableSocketFactory;
 
 /**
  * Regression tests for Connections
@@ -791,11 +799,11 @@ public class ConnectionRegressionTest extends BaseTestCase {
                 assertTrue(this.rs.next());
 
                 if (!versionMeetsMinimum(4, 1, 11)) {
-                    assertEquals("sjis".toLowerCase(Locale.ENGLISH), ((com.mysql.jdbc.ResultSetMetaData) this.rs.getMetaData()).getColumnCharacterSet(1)
-                            .toLowerCase(Locale.ENGLISH));
+                    assertEquals("sjis".toLowerCase(Locale.ENGLISH),
+                            ((com.mysql.jdbc.ResultSetMetaData) this.rs.getMetaData()).getColumnCharacterSet(1).toLowerCase(Locale.ENGLISH));
                 } else {
-                    assertEquals("windows-31j".toLowerCase(Locale.ENGLISH), ((com.mysql.jdbc.ResultSetMetaData) this.rs.getMetaData()).getColumnCharacterSet(1)
-                            .toLowerCase(Locale.ENGLISH));
+                    assertEquals("windows-31j".toLowerCase(Locale.ENGLISH),
+                            ((com.mysql.jdbc.ResultSetMetaData) this.rs.getMetaData()).getColumnCharacterSet(1).toLowerCase(Locale.ENGLISH));
                 }
 
                 props = new Properties();
@@ -1082,8 +1090,8 @@ public class ConnectionRegressionTest extends BaseTestCase {
 
             try {
                 replConn = getMasterSlaveReplicationConnection();
-                assertTrue(!((MySQLConnection) ((ReplicationConnection) replConn).getMasterConnection()).hasSameProperties(((ReplicationConnection) replConn)
-                        .getSlavesConnection()));
+                assertTrue(!((MySQLConnection) ((ReplicationConnection) replConn).getMasterConnection())
+                        .hasSameProperties(((ReplicationConnection) replConn).getSlavesConnection()));
             } finally {
                 if (replConn != null) {
                     replConn.close();
@@ -1438,11 +1446,9 @@ public class ConnectionRegressionTest extends BaseTestCase {
 
             int slaveConnectionId = Integer.parseInt(getSingleIndexedValueWithQuery(replConn, 1, "SELECT CONNECTION_ID()").toString());
 
-            // The following test is okay for now, as the chance
-            // of MySQL wrapping the connection id counter during our
-            // testsuite is very small.
-
-            assertTrue("Slave id " + slaveConnectionId + " is not newer than master id " + masterConnectionId, slaveConnectionId > masterConnectionId);
+            // The following test is okay for now, as the chance of MySQL wrapping the connection id counter during our testsuite is very small.
+            // As per Bug#21286268 fix a Replication connection first initializes the Slaves sub-connection, then the Masters.
+            assertTrue("Master id " + masterConnectionId + " is not newer than slave id " + slaveConnectionId, masterConnectionId > slaveConnectionId);
 
             assertEquals(currentCatalog, replConn.getCatalog());
 
@@ -1496,7 +1502,7 @@ public class ConnectionRegressionTest extends BaseTestCase {
         newHostBuf.append(",");
         // newHostBuf.append(host);
         newHostBuf.append("192.0.2.1"); // non-exsitent machine from RFC3330
-                                        // test network
+                                       // test network
         newHostBuf.append(":65532"); // make sure the slave fails
 
         props.remove("PORT");
@@ -1725,9 +1731,6 @@ public class ConnectionRegressionTest extends BaseTestCase {
             Properties props = new Properties();
             props.setProperty("useSSL", "true");
             props.setProperty("requireSSL", "true");
-            if (requiresSSLCipherSuitesCustomization()) {
-                props.setProperty("enabledSSLCipherSuites", CUSTOM_SSL_CIPHERS);
-            }
 
             sslConn = getConnectionWithProps(props);
             sslConn.prepareCall("{ call testBug25545()}").execute();
@@ -1749,12 +1752,10 @@ public class ConnectionRegressionTest extends BaseTestCase {
      *             if the test fails.
      */
     public void testBug36948() throws Exception {
-
         Connection _conn = null;
 
         try {
-
-            Properties props = new NonRegisteringDriver().parseURL(dbUrl, null);
+            Properties props = getPropertiesFromTestsuiteUrl();
             String host = props.getProperty(NonRegisteringDriver.HOST_PROPERTY_KEY, "localhost");
             String port = props.getProperty(NonRegisteringDriver.PORT_PROPERTY_KEY, "3306");
             String db = props.getProperty(NonRegisteringDriver.DBNAME_PROPERTY_KEY, "test");
@@ -1765,15 +1766,19 @@ public class ConnectionRegressionTest extends BaseTestCase {
                 hostSpec = host + ":" + port;
             }
 
+            props = getHostFreePropertiesFromTestsuiteUrl();
+            props.remove("useSSL");
+            props.remove("requireSSL");
+            props.remove("verifyServerCertificate");
+            props.remove("trustCertificateKeyStoreUrl");
+            props.remove("trustCertificateKeyStoreType");
+            props.remove("trustCertificateKeyStorePassword");
+
             final String url = "jdbc:mysql://" + hostSpec + "/" + db + "?useSSL=true&requireSSL=true&verifyServerCertificate=true"
                     + "&trustCertificateKeyStoreUrl=file:src/testsuite/ssl-test-certs/test-cert-store&trustCertificateKeyStoreType=JKS"
-                    + "&trustCertificateKeyStorePassword=password"
-                    + (requiresSSLCipherSuitesCustomization() ? "&enabledSSLCipherSuites=" + CUSTOM_SSL_CIPHERS : "");
+                    + "&trustCertificateKeyStorePassword=password";
 
-            _conn = DriverManager.getConnection(url, (String) this.getPropertiesFromTestsuiteUrl().get("user"), (String) this.getPropertiesFromTestsuiteUrl()
-                    .get("password"));
-
-            assertTrue(true);
+            _conn = DriverManager.getConnection(url, props);
         } finally {
             if (_conn != null) {
                 _conn.close();
@@ -1820,7 +1825,7 @@ public class ConnectionRegressionTest extends BaseTestCase {
      *             if the test fails.
      */
     public void testFailoverReadOnly() throws Exception {
-        Properties props = getMasterSlaveProps();
+        Properties props = getHostFreePropertiesFromTestsuiteUrl();
         props.setProperty("autoReconnect", "true");
         props.setProperty("queriesBeforeRetryMaster", "0");
         props.setProperty("secondsBeforeRetryMaster", "0"); // +^ enable fall back to primary as soon as possible
@@ -2042,7 +2047,7 @@ public class ConnectionRegressionTest extends BaseTestCase {
         StringBuilder urlBuf = new StringBuilder();
         urlBuf.append(getMasterSlaveUrl());
         urlBuf.append("?");
-        Properties props = getMasterSlaveProps();
+        Properties props = getHostFreePropertiesFromTestsuiteUrl();
         String key = null;
 
         Enumeration<Object> keyEnum = props.keys();
@@ -2581,10 +2586,7 @@ public class ConnectionRegressionTest extends BaseTestCase {
     }
 
     public void testBug46637() throws Exception {
-        NonRegisteringDriver driver = new NonRegisteringDriver();
-        Properties props = new Properties();
-        copyBasePropertiesIntoProps(props, driver);
-        String hostname = getPortFreeHostname(props, driver);
+        String hostname = getPortFreeHostname(null, new NonRegisteringDriver());
         UnreliableSocketFactory.flushAllStaticData();
         UnreliableSocketFactory.downHost(hostname);
 
@@ -2685,7 +2687,8 @@ public class ConnectionRegressionTest extends BaseTestCase {
         }
 
         try {
-            getConnectionWithProps("jdbc:mysql://localhost:9999,localhost:9999/test?socketFactory=testsuite.regression.ConnectionRegressionTest$PortNumberSocketFactory");
+            getConnectionWithProps(
+                    "jdbc:mysql://localhost:9999,localhost:9999/test?socketFactory=testsuite.regression.ConnectionRegressionTest$PortNumberSocketFactory");
         } catch (SQLException sqlEx) {
             assertTrue(sqlEx.getCause() instanceof IOException);
         }
@@ -2789,10 +2792,10 @@ public class ConnectionRegressionTest extends BaseTestCase {
     public void testBug51266() throws Exception {
         Properties props = new Properties();
         props.setProperty("roundRobinLoadBalance", "true"); // shouldn't be
-                                                            // needed, but used
-                                                            // in reported bug,
-                                                            // it's removed by
-                                                            // the driver
+                                                           // needed, but used
+                                                           // in reported bug,
+                                                           // it's removed by
+                                                           // the driver
         Set<String> downedHosts = new HashSet<String>();
         downedHosts.add("first");
 
@@ -2911,7 +2914,7 @@ public class ConnectionRegressionTest extends BaseTestCase {
         }
 
         @Override
-        public com.mysql.jdbc.ConnectionImpl pickConnection(LoadBalancingConnectionProxy proxy, List<String> configuredHosts,
+        public com.mysql.jdbc.ConnectionImpl pickConnection(LoadBalancedConnectionProxy proxy, List<String> configuredHosts,
                 Map<String, ConnectionImpl> liveConnections, long[] responseTimes, int numRetries) throws SQLException {
             if (forcedFutureServer == null || forceFutureServerTimes == 0 || !configuredHosts.contains(forcedFutureServer)) {
                 return super.pickConnection(proxy, configuredHosts, liveConnections, responseTimes, numRetries);
@@ -3016,7 +3019,7 @@ public class ConnectionRegressionTest extends BaseTestCase {
         }
 
         @Override
-        public com.mysql.jdbc.ConnectionImpl pickConnection(LoadBalancingConnectionProxy proxy, List<String> configuredHosts,
+        public com.mysql.jdbc.ConnectionImpl pickConnection(LoadBalancedConnectionProxy proxy, List<String> configuredHosts,
                 Map<String, ConnectionImpl> liveConnections, long[] responseTimes, int numRetries) throws SQLException {
             rebalancedTimes++;
             return super.pickConnection(proxy, configuredHosts, liveConnections, responseTimes, numRetries);
@@ -3077,7 +3080,7 @@ public class ConnectionRegressionTest extends BaseTestCase {
             assert (startConnCount > 0);
 
             failoverConnection.setAutoCommit(false); // this will fail if state
-                                                     // not copied over
+                                                    // not copied over
 
             for (int i = 0; i < 20; i++) {
 
@@ -3097,7 +3100,7 @@ public class ConnectionRegressionTest extends BaseTestCase {
             assert (endConnCount > 0);
 
             if (endConnCount - startConnCount >= 20) { // this may be bogus if run on a real system, we should probably look to see they're coming from this
-                                                       // testsuite?
+                                                      // testsuite?
                 fail("We're leaking connections even when not failed over");
             }
         } finally {
@@ -3234,7 +3237,8 @@ public class ConnectionRegressionTest extends BaseTestCase {
         assertTrue(detectedDeadConn);
         rConn.prepareStatement("SELECT 1").executeQuery();
 
-        Connection rConn2 = getConnectionWithProps("autoReconnect=true,initialTimeout=2,maxReconnects=3,cacheServerConfiguration=true,elideSetAutoCommits=true");
+        Connection rConn2 = getConnectionWithProps(
+                "autoReconnect=true,initialTimeout=2,maxReconnects=3,cacheServerConfiguration=true,elideSetAutoCommits=true");
         rConn2.prepareStatement("SELECT 1").executeQuery();
 
     }
@@ -3324,10 +3328,10 @@ public class ConnectionRegressionTest extends BaseTestCase {
 
             failoverConnection2 = getConnectionWithProps("jdbc:mysql://master:" + port + ",slave:" + port + "/", props);
 
-            assert (((com.mysql.jdbc.Connection) failoverConnection1).isMasterConnection());
+            assertTrue(((com.mysql.jdbc.Connection) failoverConnection1).isMasterConnection());
 
             // Two different Connection objects should not equal each other:
-            assert (!failoverConnection1.equals(failoverConnection2));
+            assertFalse(failoverConnection1.equals(failoverConnection2));
 
             int hc = failoverConnection1.hashCode();
 
@@ -3341,10 +3345,10 @@ public class ConnectionRegressionTest extends BaseTestCase {
                 }
             }
             // ensure we're now connected to the slave
-            assert (!((com.mysql.jdbc.Connection) failoverConnection1).isMasterConnection());
+            assertFalse(((com.mysql.jdbc.Connection) failoverConnection1).isMasterConnection());
 
             // ensure that hashCode() result is persistent across failover events when proxy state changes
-            assert (failoverConnection1.hashCode() == hc);
+            assertEquals(hc, failoverConnection1.hashCode());
         } finally {
             if (failoverConnection1 != null) {
                 failoverConnection1.close();
@@ -3505,11 +3509,11 @@ public class ConnectionRegressionTest extends BaseTestCase {
                 createUser("'plug_dest'@'%'", "IDENTIFIED BY 'foo'");
                 this.stmt.executeUpdate("GRANT PROXY ON 'plug_dest'@'%' TO 'wl5851user'@'%'");
                 this.stmt.executeUpdate("delete from mysql.db where user='plug_dest'");
-                this.stmt
-                        .executeUpdate("insert into mysql.db (Host, Db, User, Select_priv, Insert_priv, Update_priv, Delete_priv, Create_priv,Drop_priv, Grant_priv, References_priv, Index_priv, Alter_priv, Create_tmp_table_priv, Lock_tables_priv, Create_view_priv,Show_view_priv, Create_routine_priv, Alter_routine_priv, Execute_priv, Event_priv, Trigger_priv) VALUES ('%', '"
+                this.stmt.executeUpdate(
+                        "insert into mysql.db (Host, Db, User, Select_priv, Insert_priv, Update_priv, Delete_priv, Create_priv,Drop_priv, Grant_priv, References_priv, Index_priv, Alter_priv, Create_tmp_table_priv, Lock_tables_priv, Create_view_priv,Show_view_priv, Create_routine_priv, Alter_routine_priv, Execute_priv, Event_priv, Trigger_priv) VALUES ('%', '"
                                 + dbname + "', 'plug_dest', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'N', 'N')");
-                this.stmt
-                        .executeUpdate("insert into mysql.db (Host, Db, User, Select_priv, Insert_priv, Update_priv, Delete_priv, Create_priv,Drop_priv, Grant_priv, References_priv, Index_priv, Alter_priv, Create_tmp_table_priv, Lock_tables_priv, Create_view_priv,Show_view_priv, Create_routine_priv, Alter_routine_priv, Execute_priv, Event_priv, Trigger_priv) VALUES ('%', 'information\\_schema', 'plug_dest', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'N', 'N')");
+                this.stmt.executeUpdate(
+                        "insert into mysql.db (Host, Db, User, Select_priv, Insert_priv, Update_priv, Delete_priv, Create_priv,Drop_priv, Grant_priv, References_priv, Index_priv, Alter_priv, Create_tmp_table_priv, Lock_tables_priv, Create_view_priv,Show_view_priv, Create_routine_priv, Alter_routine_priv, Execute_priv, Event_priv, Trigger_priv) VALUES ('%', 'information\\_schema', 'plug_dest', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'N', 'N')");
                 this.stmt.executeUpdate("flush privileges");
 
                 props = new Properties();
@@ -3555,8 +3559,8 @@ public class ConnectionRegressionTest extends BaseTestCase {
             try {
 
                 // install plugin if required
-                this.rs = this.stmt.executeQuery("select (PLUGIN_LIBRARY LIKE 'two_questions%') as `TRUE`"
-                        + " FROM INFORMATION_SCHEMA.PLUGINS WHERE PLUGIN_NAME='two_questions'");
+                this.rs = this.stmt.executeQuery(
+                        "select (PLUGIN_LIBRARY LIKE 'two_questions%') as `TRUE`" + " FROM INFORMATION_SCHEMA.PLUGINS WHERE PLUGIN_NAME='two_questions'");
                 if (this.rs.next()) {
                     if (!this.rs.getBoolean(1)) {
                         install_plugin_in_runtime = true;
@@ -3578,11 +3582,11 @@ public class ConnectionRegressionTest extends BaseTestCase {
 
                 createUser("'wl5851user2'@'%'", "identified WITH two_questions AS 'two_questions_password'");
                 this.stmt.executeUpdate("delete from mysql.db where user='wl5851user2'");
-                this.stmt
-                        .executeUpdate("insert into mysql.db (Host, Db, User, Select_priv, Insert_priv, Update_priv, Delete_priv, Create_priv,Drop_priv, Grant_priv, References_priv, Index_priv, Alter_priv, Create_tmp_table_priv, Lock_tables_priv, Create_view_priv,Show_view_priv, Create_routine_priv, Alter_routine_priv, Execute_priv, Event_priv, Trigger_priv) VALUES ('%', '"
+                this.stmt.executeUpdate(
+                        "insert into mysql.db (Host, Db, User, Select_priv, Insert_priv, Update_priv, Delete_priv, Create_priv,Drop_priv, Grant_priv, References_priv, Index_priv, Alter_priv, Create_tmp_table_priv, Lock_tables_priv, Create_view_priv,Show_view_priv, Create_routine_priv, Alter_routine_priv, Execute_priv, Event_priv, Trigger_priv) VALUES ('%', '"
                                 + dbname + "', 'wl5851user2', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'N', 'N')");
-                this.stmt
-                        .executeUpdate("insert into mysql.db (Host, Db, User, Select_priv, Insert_priv, Update_priv, Delete_priv, Create_priv,Drop_priv, Grant_priv, References_priv, Index_priv, Alter_priv, Create_tmp_table_priv, Lock_tables_priv, Create_view_priv,Show_view_priv, Create_routine_priv, Alter_routine_priv, Execute_priv, Event_priv, Trigger_priv) VALUES ('%', 'information\\_schema', 'wl5851user2', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'N', 'N')");
+                this.stmt.executeUpdate(
+                        "insert into mysql.db (Host, Db, User, Select_priv, Insert_priv, Update_priv, Delete_priv, Create_priv,Drop_priv, Grant_priv, References_priv, Index_priv, Alter_priv, Create_tmp_table_priv, Lock_tables_priv, Create_view_priv,Show_view_priv, Create_routine_priv, Alter_routine_priv, Execute_priv, Event_priv, Trigger_priv) VALUES ('%', 'information\\_schema', 'wl5851user2', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'N', 'N')");
                 this.stmt.executeUpdate("flush privileges");
 
                 props = new Properties();
@@ -3627,8 +3631,8 @@ public class ConnectionRegressionTest extends BaseTestCase {
             try {
 
                 // install plugin if required
-                this.rs = this.stmt.executeQuery("select (PLUGIN_LIBRARY LIKE 'three_attempts%') as `TRUE`"
-                        + " FROM INFORMATION_SCHEMA.PLUGINS WHERE PLUGIN_NAME='three_attempts'");
+                this.rs = this.stmt.executeQuery(
+                        "select (PLUGIN_LIBRARY LIKE 'three_attempts%') as `TRUE`" + " FROM INFORMATION_SCHEMA.PLUGINS WHERE PLUGIN_NAME='three_attempts'");
                 if (this.rs.next()) {
                     if (!this.rs.getBoolean(1)) {
                         install_plugin_in_runtime = true;
@@ -3650,11 +3654,11 @@ public class ConnectionRegressionTest extends BaseTestCase {
 
                 createUser("'wl5851user3'@'%'", "identified WITH three_attempts AS 'three_attempts_password'");
                 this.stmt.executeUpdate("delete from mysql.db where user='wl5851user3'");
-                this.stmt
-                        .executeUpdate("insert into mysql.db (Host, Db, User, Select_priv, Insert_priv, Update_priv, Delete_priv, Create_priv,Drop_priv, Grant_priv, References_priv, Index_priv, Alter_priv, Create_tmp_table_priv, Lock_tables_priv, Create_view_priv,Show_view_priv, Create_routine_priv, Alter_routine_priv, Execute_priv, Event_priv, Trigger_priv) VALUES ('%', '"
+                this.stmt.executeUpdate(
+                        "insert into mysql.db (Host, Db, User, Select_priv, Insert_priv, Update_priv, Delete_priv, Create_priv,Drop_priv, Grant_priv, References_priv, Index_priv, Alter_priv, Create_tmp_table_priv, Lock_tables_priv, Create_view_priv,Show_view_priv, Create_routine_priv, Alter_routine_priv, Execute_priv, Event_priv, Trigger_priv) VALUES ('%', '"
                                 + dbname + "', 'wl5851user3', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'N', 'N')");
-                this.stmt
-                        .executeUpdate("insert into mysql.db (Host, Db, User, Select_priv, Insert_priv, Update_priv, Delete_priv, Create_priv,Drop_priv, Grant_priv, References_priv, Index_priv, Alter_priv, Create_tmp_table_priv, Lock_tables_priv, Create_view_priv,Show_view_priv, Create_routine_priv, Alter_routine_priv, Execute_priv, Event_priv, Trigger_priv) VALUES ('%', 'information\\_schema', 'wl5851user3', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'N', 'N')");
+                this.stmt.executeUpdate(
+                        "insert into mysql.db (Host, Db, User, Select_priv, Insert_priv, Update_priv, Delete_priv, Create_priv,Drop_priv, Grant_priv, References_priv, Index_priv, Alter_priv, Create_tmp_table_priv, Lock_tables_priv, Create_view_priv,Show_view_priv, Create_routine_priv, Alter_routine_priv, Execute_priv, Event_priv, Trigger_priv) VALUES ('%', 'information\\_schema', 'wl5851user3', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'Y', 'N', 'N')");
                 this.stmt.executeUpdate("flush privileges");
 
                 props = new Properties();
@@ -3970,6 +3974,7 @@ public class ConnectionRegressionTest extends BaseTestCase {
                 props = new Properties();
                 props.setProperty("user", "wl5735user");
                 props.setProperty("password", "");
+                props.setProperty("useSSL", "false");
 
                 Connection testConn = null;
                 Statement testSt = null;
@@ -3992,9 +3997,6 @@ public class ConnectionRegressionTest extends BaseTestCase {
                     System.setProperty("javax.net.ssl.trustStore", trustStorePath);
                     System.setProperty("javax.net.ssl.trustStorePassword", "password");
                     props.setProperty("useSSL", "true");
-                    if (requiresSSLCipherSuitesCustomization()) {
-                        props.setProperty("enabledSSLCipherSuites", CUSTOM_SSL_CIPHERS);
-                    }
                     testConn = getConnectionWithProps(props);
 
                     assertTrue("SSL connection isn't actually established!", ((MySQLConnection) testConn).getIO().isSSLEstablished());
@@ -4073,27 +4075,36 @@ public class ConnectionRegressionTest extends BaseTestCase {
                 final Properties propsNoRetrieval = new Properties();
                 propsNoRetrieval.setProperty("user", "wl5602user");
                 propsNoRetrieval.setProperty("password", "pwd");
+                propsNoRetrieval.setProperty("useSSL", "false");
 
                 final Properties propsNoRetrievalNoPassword = new Properties();
                 propsNoRetrievalNoPassword.setProperty("user", "wl5602nopassword");
                 propsNoRetrievalNoPassword.setProperty("password", "");
+                propsNoRetrievalNoPassword.setProperty("useSSL", "false");
 
                 final Properties propsAllowRetrieval = new Properties();
                 propsAllowRetrieval.setProperty("user", "wl5602user");
                 propsAllowRetrieval.setProperty("password", "pwd");
                 propsAllowRetrieval.setProperty("allowPublicKeyRetrieval", "true");
+                propsAllowRetrieval.setProperty("useSSL", "false");
 
                 final Properties propsAllowRetrievalNoPassword = new Properties();
                 propsAllowRetrievalNoPassword.setProperty("user", "wl5602nopassword");
                 propsAllowRetrievalNoPassword.setProperty("password", "");
                 propsAllowRetrievalNoPassword.setProperty("allowPublicKeyRetrieval", "true");
+                propsAllowRetrievalNoPassword.setProperty("useSSL", "false");
 
                 // 1. without SSL
                 // SQLException expected due to server doesn't recognize Public Key Retrieval packet
                 assertThrows(SQLException.class, "Public Key Retrieval is not allowed", new Callable<Void>() {
                     public Void call() throws Exception {
-                        getConnectionWithProps(propsNoRetrieval);
-                        return null;
+                        try {
+                            getConnectionWithProps(propsNoRetrieval);
+                            return null;
+                        } catch (Exception ex) {
+                            ex.printStackTrace();
+                            throw ex;
+                        }
                     }
                 });
                 assertThrows(SQLException.class, "Access denied for user 'wl5602user'.*", new Callable<Void>() {
@@ -4134,12 +4145,6 @@ public class ConnectionRegressionTest extends BaseTestCase {
                 propsNoRetrievalNoPassword.setProperty("useSSL", "true");
                 propsAllowRetrieval.setProperty("useSSL", "true");
                 propsAllowRetrievalNoPassword.setProperty("useSSL", "true");
-                if (requiresSSLCipherSuitesCustomization()) {
-                    propsNoRetrieval.setProperty("enabledSSLCipherSuites", CUSTOM_SSL_CIPHERS);
-                    propsNoRetrievalNoPassword.setProperty("enabledSSLCipherSuites", CUSTOM_SSL_CIPHERS);
-                    propsAllowRetrieval.setProperty("enabledSSLCipherSuites", CUSTOM_SSL_CIPHERS);
-                    propsAllowRetrievalNoPassword.setProperty("enabledSSLCipherSuites", CUSTOM_SSL_CIPHERS);
-                }
 
                 assertCurrentUser(null, propsNoRetrieval, "wl5602user", true);
                 assertCurrentUser(null, propsNoRetrievalNoPassword, "wl5602nopassword", false);
@@ -4184,9 +4189,8 @@ public class ConnectionRegressionTest extends BaseTestCase {
                 this.sha256Stmt.executeUpdate("grant all on *.* to 'wl5602nopassword'@'%'");
                 this.sha256Stmt.executeUpdate("SET GLOBAL old_passwords= 2");
                 this.sha256Stmt.executeUpdate("SET SESSION old_passwords= 2");
-                this.sha256Stmt
-                        .executeUpdate(((MySQLConnection) this.sha256Conn).versionMeetsMinimum(5, 7, 6) ? "ALTER USER 'wl5602user'@'%' IDENTIFIED BY 'pwd'"
-                                : "set password for 'wl5602user'@'%' = PASSWORD('pwd')");
+                this.sha256Stmt.executeUpdate(((MySQLConnection) this.sha256Conn).versionMeetsMinimum(5, 7, 6)
+                        ? "ALTER USER 'wl5602user'@'%' IDENTIFIED BY 'pwd'" : "set password for 'wl5602user'@'%' = PASSWORD('pwd')");
                 this.sha256Stmt.executeUpdate("flush privileges");
 
                 final Properties propsNoRetrieval = new Properties();
@@ -4607,8 +4611,10 @@ public class ConnectionRegressionTest extends BaseTestCase {
                     testRs = testSt.executeQuery("SELECT * FROM `" + dbname + "`.`\u307b\u3052\u307b\u3052`");
                 } catch (SQLException e2) {
                     if (e2.getClass().getName().endsWith("MySQLSyntaxErrorException")) {
-                        assertEquals("\u0422\u0430\u0431\u043b\u0438\u0446\u0430 '" + dbname
-                                + ".\u307b\u3052\u307b\u3052' \u043d\u0435 \u0441\u0443\u0449\u0435\u0441\u0442\u0432\u0443\u0435\u0442", e2.getMessage());
+                        assertEquals(
+                                "\u0422\u0430\u0431\u043b\u0438\u0446\u0430 '" + dbname
+                                        + ".\u307b\u3052\u307b\u3052' \u043d\u0435 \u0441\u0443\u0449\u0435\u0441\u0442\u0432\u0443\u0435\u0442",
+                                e2.getMessage());
                     } else if (e2.getErrorCode() == MysqlErrorNumbers.ER_FILE_NOT_FOUND) {
                         // this could happen on Windows with 5.5 and 5.6 servers where BUG#14642248 exists
                         assertTrue("File not found error message should be russian but is this one: " + e2.getMessage(),
@@ -4671,8 +4677,8 @@ public class ConnectionRegressionTest extends BaseTestCase {
         boolean normalState = ((ConnectionImpl) this.conn).isServerLocal();
 
         if (normalState) {
-            boolean isNotLocal = ((ConnectionImpl) getConnectionWithProps(StandardSocketFactory.IS_LOCAL_HOSTNAME_REPLACEMENT_PROPERTY_NAME
-                    + "=www.oracle.com:3306")).isServerLocal();
+            boolean isNotLocal = ((ConnectionImpl) getConnectionWithProps(
+                    SocketMetadata.Helper.IS_LOCAL_HOSTNAME_REPLACEMENT_PROPERTY_NAME + "=www.oracle.com:3306")).isServerLocal();
 
             assertFalse(isNotLocal == normalState);
         }
@@ -4886,7 +4892,8 @@ public class ConnectionRegressionTest extends BaseTestCase {
                     fail("SQLException expected due to password expired");
                 } catch (SQLException e1) {
 
-                    if (e1.getErrorCode() == MysqlErrorNumbers.ER_MUST_CHANGE_PASSWORD || e1.getErrorCode() == MysqlErrorNumbers.ER_MUST_CHANGE_PASSWORD_LOGIN) {
+                    if (e1.getErrorCode() == MysqlErrorNumbers.ER_MUST_CHANGE_PASSWORD
+                            || e1.getErrorCode() == MysqlErrorNumbers.ER_MUST_CHANGE_PASSWORD_LOGIN) {
 
                         props.setProperty("disconnectOnExpiredPasswords", "false");
                         try {
@@ -4900,8 +4907,8 @@ public class ConnectionRegressionTest extends BaseTestCase {
                                 testConn = getConnectionWithProps(props);
                                 testSt = testConn.createStatement();
                             }
-                            testSt.executeUpdate(versionMeetsMinimum(5, 7, 6) ? "ALTER USER USER() IDENTIFIED BY 'newpwd'"
-                                    : "SET PASSWORD = PASSWORD('newpwd')");
+                            testSt.executeUpdate(
+                                    versionMeetsMinimum(5, 7, 6) ? "ALTER USER USER() IDENTIFIED BY 'newpwd'" : "SET PASSWORD = PASSWORD('newpwd')");
                             testConn.close();
 
                             props.setProperty("user", "must_change1");
@@ -5585,8 +5592,9 @@ public class ConnectionRegressionTest extends BaseTestCase {
         System.out.println("Test related connections in MAP after GC: " + connectionNumber);
         System.out.println("MAP: " + connectionTrackingMap.size());
 
-        assertEquals("No connection with \"" + attributeValue
-                + "\" connection attribute should exist in NonRegisteringDriver.connectionPhantomRefs map after GC", 0, connectionNumber);
+        assertEquals(
+                "No connection with \"" + attributeValue + "\" connection attribute should exist in NonRegisteringDriver.connectionPhantomRefs map after GC", 0,
+                connectionNumber);
     }
 
     private int countTestConnections(Map<?, ?> connectionTrackingMap, Field referentField, boolean show, String attributValue) throws Exception {
@@ -5635,9 +5643,10 @@ public class ConnectionRegressionTest extends BaseTestCase {
             createUser(st1, "'\u30C6\u30B9\u30C8\u30C6\u30B9\u30C8'@'%'", "identified by 'msandbox'");
             st1.execute("grant all on `\u30C6\u30B9\u30C8\u30C6\u30B9\u30C8`.* to '\u30C6\u30B9\u30C8\u30C6\u30B9\u30C8'@'%'");
 
-            props = new Properties();
+            props = getHostFreePropertiesFromTestsuiteUrl();
             props.setProperty("user", "\u30C6\u30B9\u30C8\u30C6\u30B9\u30C8\u30C6\u30B9\u30C8");
             props.setProperty("password", "msandbox");
+            props.remove(NonRegisteringDriver.DBNAME_PROPERTY_KEY);
             c2 = DriverManager.getConnection(url + "/\u30C6\u30B9\u30C8\u30C6\u30B9\u30C8\u30C6\u30B9\u30C8", props);
             c2.createStatement().executeQuery("select 1");
             c2.close();
@@ -5837,22 +5846,24 @@ public class ConnectionRegressionTest extends BaseTestCase {
                 this.sha256Stmt.executeUpdate("grant all on *.* to 'wl6134user'@'%'");
                 this.sha256Stmt.executeUpdate("SET GLOBAL old_passwords= 2");
                 this.sha256Stmt.executeUpdate("SET SESSION old_passwords= 2");
-                this.sha256Stmt
-                        .executeUpdate(((MySQLConnection) this.sha256Conn).versionMeetsMinimum(5, 7, 6) ? "ALTER USER 'wl6134user'@'%' IDENTIFIED BY 'aaaaaaaaaabbbbbbbbbbccccccccccddddddddddeeeeeeeeee"
+                this.sha256Stmt.executeUpdate(((MySQLConnection) this.sha256Conn).versionMeetsMinimum(5, 7, 6)
+                        ? "ALTER USER 'wl6134user'@'%' IDENTIFIED BY 'aaaaaaaaaabbbbbbbbbbccccccccccddddddddddeeeeeeeeee"
                                 + "aaaaaaaaaabbbbbbbbbbccccccccccddddddddddeeeeeeeeeeaaaaaaaaaabbbbbbbbbbccccccccccddddddddddeeeeeeeeee"
                                 + "aaaaaaaaaabbbbbbbbbbccccccccccddddddddddeeeeeeeeeeaaaaaaaaaabbbbbbbbbbccccccccccddddddddddeeeeeeeeee"
                                 + "aaaaaaaaaabbbbbbbbbbccccccccccddddddddddeeeeeeeeee'"
-                                : "set password for 'wl6134user'@'%' = PASSWORD('aaaaaaaaaabbbbbbbbbbccccccccccddddddddddeeeeeeeeee"
-                                        + "aaaaaaaaaabbbbbbbbbbccccccccccddddddddddeeeeeeeeeeaaaaaaaaaabbbbbbbbbbccccccccccddddddddddeeeeeeeeee"
-                                        + "aaaaaaaaaabbbbbbbbbbccccccccccddddddddddeeeeeeeeeeaaaaaaaaaabbbbbbbbbbccccccccccddddddddddeeeeeeeeee"
-                                        + "aaaaaaaaaabbbbbbbbbbccccccccccddddddddddeeeeeeeeee')");
+                        : "set password for 'wl6134user'@'%' = PASSWORD('aaaaaaaaaabbbbbbbbbbccccccccccddddddddddeeeeeeeeee"
+                                + "aaaaaaaaaabbbbbbbbbbccccccccccddddddddddeeeeeeeeeeaaaaaaaaaabbbbbbbbbbccccccccccddddddddddeeeeeeeeee"
+                                + "aaaaaaaaaabbbbbbbbbbccccccccccddddddddddeeeeeeeeeeaaaaaaaaaabbbbbbbbbbccccccccccddddddddddeeeeeeeeee"
+                                + "aaaaaaaaaabbbbbbbbbbccccccccccddddddddddeeeeeeeeee')");
                 this.sha256Stmt.executeUpdate("flush privileges");
 
                 props.setProperty("user", "wl6134user");
-                props.setProperty("password", "aaaaaaaaaabbbbbbbbbbccccccccccddddddddddeeeeeeeeeeaaaaaaaaaabbbbbbbbbbccccccccccddddddddddeeeeeeeeee"
-                        + "aaaaaaaaaabbbbbbbbbbccccccccccddddddddddeeeeeeeeeeaaaaaaaaaabbbbbbbbbbccccccccccddddddddddeeeeeeeeee"
-                        + "aaaaaaaaaabbbbbbbbbbccccccccccddddddddddeeeeeeeeeeaaaaaaaaaabbbbbbbbbbccccccccccddddddddddeeeeeeeeee");
+                props.setProperty("password",
+                        "aaaaaaaaaabbbbbbbbbbccccccccccddddddddddeeeeeeeeeeaaaaaaaaaabbbbbbbbbbccccccccccddddddddddeeeeeeeeee"
+                                + "aaaaaaaaaabbbbbbbbbbccccccccccddddddddddeeeeeeeeeeaaaaaaaaaabbbbbbbbbbccccccccccddddddddddeeeeeeeeee"
+                                + "aaaaaaaaaabbbbbbbbbbccccccccccddddddddddeeeeeeeeeeaaaaaaaaaabbbbbbbbbbccccccccccddddddddddeeeeeeeeee");
                 props.setProperty("defaultAuthenticationPlugin", "com.mysql.jdbc.authentication.Sha256PasswordPlugin");
+                props.setProperty("useSSL", "false");
 
                 Connection testConn = null;
                 try {
@@ -5917,8 +5928,8 @@ public class ConnectionRegressionTest extends BaseTestCase {
         for (int i = 0; i < testMemUnits.length; i++) {
             for (int j = 0; j < testMemUnits[i].length; j++) {
                 // testing with memory values under 2GB because higher values aren't supported.
-                connWithMemProps = (com.mysql.jdbc.Connection) getConnectionWithProps(String.format(
-                        "blobSendChunkSize=1.2%1$s,largeRowSizeThreshold=1.4%1$s,locatorFetchBufferSize=1.6%1$s", testMemUnits[i][j]));
+                connWithMemProps = (com.mysql.jdbc.Connection) getConnectionWithProps(
+                        String.format("blobSendChunkSize=1.2%1$s,largeRowSizeThreshold=1.4%1$s,locatorFetchBufferSize=1.6%1$s", testMemUnits[i][j]));
 
                 // test values of property 'blobSendChunkSize'
                 assertEquals("Memory unit '" + testMemUnits[i][j] + "'; property 'blobSendChunkSize'", (int) (memMultiplier[i] * 1.2),
@@ -6118,7 +6129,7 @@ public class ConnectionRegressionTest extends BaseTestCase {
         List<String> masterHosts = new ArrayList<String>();
         masterHosts.add(masterHost);
         List<String> slaveHosts = new ArrayList<String>(); // empty
-        ReplicationConnection replConn = new ReplicationConnection(props, props, masterHosts, slaveHosts);
+        ReplicationConnection replConn = ReplicationConnectionProxy.createProxyInstance(masterHosts, props, slaveHosts, props);
         return replConn;
     }
 
@@ -6235,8 +6246,8 @@ public class ConnectionRegressionTest extends BaseTestCase {
         assertThrows(Exception.class, "ExceptionInterceptor.init\\(\\) called 1 time\\(s\\)", new Callable<Void>() {
             @SuppressWarnings("synthetic-access")
             public Void call() throws Exception {
-                getConnectionWithProps("exceptionInterceptors=testsuite.regression.ConnectionRegressionTest$TestBug71850ExceptionInterceptor,"
-                        + "user=unexistent_user");
+                getConnectionWithProps(
+                        "exceptionInterceptors=testsuite.regression.ConnectionRegressionTest$TestBug71850ExceptionInterceptor," + "user=unexistent_user");
                 return null;
             }
         });
@@ -6412,17 +6423,15 @@ public class ConnectionRegressionTest extends BaseTestCase {
                 this.sha256Stmt.executeUpdate("grant all on *.* to 'bug18869381user2'@'%'");
                 createUser(this.sha256Stmt, "'bug18869381user3'@'%'", "identified WITH mysql_native_password");
                 this.sha256Stmt.executeUpdate("grant all on *.* to 'bug18869381user3'@'%'");
-                this.sha256Stmt
-                        .executeUpdate(((MySQLConnection) this.sha256Conn).versionMeetsMinimum(5, 7, 6) ? "ALTER USER 'bug18869381user3'@'%' IDENTIFIED BY 'pwd3'"
-                                : "set password for 'bug18869381user3'@'%' = PASSWORD('pwd3')");
+                this.sha256Stmt.executeUpdate(((MySQLConnection) this.sha256Conn).versionMeetsMinimum(5, 7, 6)
+                        ? "ALTER USER 'bug18869381user3'@'%' IDENTIFIED BY 'pwd3'" : "set password for 'bug18869381user3'@'%' = PASSWORD('pwd3')");
                 this.sha256Stmt.executeUpdate("SET GLOBAL old_passwords= 2");
                 this.sha256Stmt.executeUpdate("SET SESSION old_passwords= 2");
-                this.sha256Stmt
-                        .executeUpdate(((MySQLConnection) this.sha256Conn).versionMeetsMinimum(5, 7, 6) ? "ALTER USER 'bug18869381user1'@'%' IDENTIFIED BY 'LongLongLongLongLongLongLongLongLongLongLongLongPwd1'"
-                                : "set password for 'bug18869381user1'@'%' = PASSWORD('LongLongLongLongLongLongLongLongLongLongLongLongPwd1')");
-                this.sha256Stmt
-                        .executeUpdate(((MySQLConnection) this.sha256Conn).versionMeetsMinimum(5, 7, 6) ? "ALTER USER 'bug18869381user2'@'%' IDENTIFIED BY 'pwd2'"
-                                : "set password for 'bug18869381user2'@'%' = PASSWORD('pwd2')");
+                this.sha256Stmt.executeUpdate(((MySQLConnection) this.sha256Conn).versionMeetsMinimum(5, 7, 6)
+                        ? "ALTER USER 'bug18869381user1'@'%' IDENTIFIED BY 'LongLongLongLongLongLongLongLongLongLongLongLongPwd1'"
+                        : "set password for 'bug18869381user1'@'%' = PASSWORD('LongLongLongLongLongLongLongLongLongLongLongLongPwd1')");
+                this.sha256Stmt.executeUpdate(((MySQLConnection) this.sha256Conn).versionMeetsMinimum(5, 7, 6)
+                        ? "ALTER USER 'bug18869381user2'@'%' IDENTIFIED BY 'pwd2'" : "set password for 'bug18869381user2'@'%' = PASSWORD('pwd2')");
                 this.sha256Stmt.executeUpdate("flush privileges");
 
                 Properties props = new Properties();
@@ -7396,12 +7405,6 @@ public class ConnectionRegressionTest extends BaseTestCase {
         }
 
         final Properties props = new Properties();
-        final Callable<Void> callableInstance = new Callable<Void>() {
-            public Void call() throws Exception {
-                getConnectionWithProps(props);
-                return null;
-            }
-        };
 
         /*
          * case 1: non verifying server certificate
@@ -7411,11 +7414,6 @@ public class ConnectionRegressionTest extends BaseTestCase {
         props.setProperty("requireSSL", "true");
         props.setProperty("verifyServerCertificate", "false");
 
-        if (requiresSSLCipherSuitesCustomization()) {
-            assertThrows(SQLException.class, Messages.getString("CommunicationsException.incompatibleSSLCipherSuites"), callableInstance);
-
-            props.setProperty("enabledSSLCipherSuites", CUSTOM_SSL_CIPHERS);
-        }
         getConnectionWithProps(props);
 
         /*
@@ -7428,12 +7426,6 @@ public class ConnectionRegressionTest extends BaseTestCase {
         props.setProperty("trustCertificateKeyStoreUrl", "file:src/testsuite/ssl-test-certs/test-cert-store");
         props.setProperty("trustCertificateKeyStoreType", "JKS");
         props.setProperty("trustCertificateKeyStorePassword", "password");
-
-        if (requiresSSLCipherSuitesCustomization()) {
-            assertThrows(SQLException.class, Messages.getString("CommunicationsException.incompatibleSSLCipherSuites"), callableInstance);
-
-            props.setProperty("enabledSSLCipherSuites", CUSTOM_SSL_CIPHERS);
-        }
 
         getConnectionWithProps(props);
 
@@ -7450,12 +7442,6 @@ public class ConnectionRegressionTest extends BaseTestCase {
         System.setProperty("javax.net.ssl.keyStorePassword", "password");
         System.setProperty("javax.net.ssl.trustStore", trustStorePath);
         System.setProperty("javax.net.ssl.trustStorePassword", "password");
-
-        if (requiresSSLCipherSuitesCustomization()) {
-            assertThrows(SQLException.class, Messages.getString("CommunicationsException.incompatibleSSLCipherSuites"), callableInstance);
-
-            props.setProperty("enabledSSLCipherSuites", CUSTOM_SSL_CIPHERS);
-        }
 
         getConnectionWithProps(props);
     }
@@ -7587,8 +7573,8 @@ public class ConnectionRegressionTest extends BaseTestCase {
                 String[] plugins;
 
                 // install cleartext plugin if required
-                this.rs = testStmt.executeQuery("SELECT (PLUGIN_LIBRARY LIKE 'auth_test_plugin%') FROM INFORMATION_SCHEMA.PLUGINS"
-                        + " WHERE PLUGIN_NAME='cleartext_plugin_server'");
+                this.rs = testStmt.executeQuery(
+                        "SELECT (PLUGIN_LIBRARY LIKE 'auth_test_plugin%') FROM INFORMATION_SCHEMA.PLUGINS" + " WHERE PLUGIN_NAME='cleartext_plugin_server'");
                 if (!this.rs.next() || !this.rs.getBoolean(1)) {
                     String ext = System.getProperty("os.name").toUpperCase().indexOf("WINDOWS") > -1 ? ".dll" : ".so";
                     testStmt.execute("INSTALL PLUGIN cleartext_plugin_server SONAME 'auth_test_plugin" + ext + "'");
@@ -7766,9 +7752,6 @@ public class ConnectionRegressionTest extends BaseTestCase {
                         props.setProperty("useSSL", "true");
                         props.setProperty("requireSSL", "true");
                         props.setProperty("verifyServerCertificate", "false");
-                        if (requiresSSLCipherSuitesCustomization(testBaseConn)) {
-                            props.setProperty("enabledSSLCipherSuites", CUSTOM_SSL_CIPHERS);
-                        }
                         testCaseMsg = "SSL";
                         break;
 
@@ -7900,9 +7883,9 @@ public class ConnectionRegressionTest extends BaseTestCase {
                                 final Connection testConn;
                                 Statement testStmt;
 
-                                boolean expectedPubKeyRetrievalFail = (user.endsWith("_sha") || user.endsWith("_mnp")
-                                        && defAuthPlugin.equals(Sha256PasswordPlugin.class))
-                                        && !allowPubKeyRetrieval && pwd.length() > 0;
+                                boolean expectedPubKeyRetrievalFail = (user.endsWith("_sha")
+                                        || user.endsWith("_mnp") && defAuthPlugin.equals(Sha256PasswordPlugin.class)) && !allowPubKeyRetrieval
+                                        && pwd.length() > 0;
                                 boolean expectedAccessDeniedFail = !user.equals(pwd);
                                 System.out.printf("%-25s : %-18s : %-25s : %-25s : %s%n", defAuthPlugin.getSimpleName(), allowPubKeyRetrieval, user, pwd,
                                         expectedPubKeyRetrievalFail ? "Fail [Pub. Key retrieval]" : expectedAccessDeniedFail ? "Fail [Access denied]" : "Ok");
@@ -7912,6 +7895,7 @@ public class ConnectionRegressionTest extends BaseTestCase {
                                 props.setProperty("password", pwd);
                                 props.setProperty("defaultAuthenticationPlugin", defAuthPlugin.getName());
                                 props.setProperty("allowPublicKeyRetrieval", Boolean.toString(allowPubKeyRetrieval));
+                                props.setProperty("useSSL", "false");
 
                                 if (expectedPubKeyRetrievalFail) {
                                     // connection will fail due to public key retrieval failure
@@ -7957,9 +7941,8 @@ public class ConnectionRegressionTest extends BaseTestCase {
 
                                     // change user using different credentials
                                     final String swapUser = user.indexOf("_sha") == -1 ? "bug75670user_sha" : "bug75670user_mnp";
-                                    expectedPubKeyRetrievalFail = (swapUser.endsWith("_sha") || swapUser.endsWith("_mnp")
-                                            && defAuthPlugin.equals(Sha256PasswordPlugin.class))
-                                            && !allowPubKeyRetrieval;
+                                    expectedPubKeyRetrievalFail = (swapUser.endsWith("_sha")
+                                            || swapUser.endsWith("_mnp") && defAuthPlugin.equals(Sha256PasswordPlugin.class)) && !allowPubKeyRetrieval;
                                     System.out.printf("%25s : %-18s : %-25s : %-25s : %s%n", "| ChangeUser (diff)", allowPubKeyRetrieval, swapUser, swapUser,
                                             expectedPubKeyRetrievalFail ? "Fail [Pub. Key retrieval]" : "Ok");
 
@@ -8038,5 +8021,727 @@ public class ConnectionRegressionTest extends BaseTestCase {
                 c2.close();
             }
         }
+    }
+
+    /**
+     * Tests fix for Bug#21934573 - FABRIC CODE INVOLVED IN THREAD DEADLOCK.
+     * (Duplicate Bug#78710 (21966391) - Deadlock on ReplicationConnection and ReplicationConnectionGroup when failover)
+     * 
+     * Two threads with different Fabric connections using the same server group (and consequently the same {@link ReplicationConnectionGroup}) may hit a
+     * deadlock when one executes a failover procedure and the other, simultaneously, calls a method that acquires a lock on the {@link ReplicationConnection}
+     * instance monitor.
+     * 
+     * This happens when, in one thread, a Fabric connection (performing the failover) and while owning a lock on {@link ReplicationConnectionGroup},
+     * sequentially tries to lock the object monitor from each {@link ReplicationConnection} belonging to the same {@link ReplicationConnectionGroup}, in the
+     * attempt of updating their servers lists by calling the synchronized methods {@link ReplicationConnection#removeMasterHost(String)},
+     * {@link ReplicationConnection#addSlaveHost(String)}, {@link ReplicationConnection#removeSlaveHost(String)} or
+     * {@link ReplicationConnection#promoteSlaveToMaster(String)} while, at the same time, a second thread is executing one of the synchronized methods from the
+     * {@link ReplicationConnection} instance, such as {@link ReplicationConnection#close()} or {@link ReplicationConnection#doPing()} (*), in one of those
+     * connections. Later on, the second thread, eventually initiates a failover procedure too and hits the lock on {@link ReplicationConnectionGroup} owned by
+     * the first thread. The first thread, at the same time, requires that the lock on {@link ReplicationConnection} is released by the second thread to be able
+     * to complete the failover procedure is has initiated before.
+     * (*) Executing a query may trigger this too via locking on {@link LoadBalancedConnectionProxy}.
+     * 
+     * This test simulates the way Fabric connections operate when they need to synchronize the list of servers from a {@link ReplicationConnection} with the
+     * Fabric's server group. In that operation we, like Fabric connections, use an {@link ExceptionInterceptor} that ends up changing the
+     * {@link ReplicationConnection}s from a given {@link ReplicationConnectionGroup}.
+     * 
+     * This test is unable to cover the failing scenario since the fix in the main code was also reproduced here, with the addition of the {@link ReentrantLock}
+     * {@code singleSynchWorkerMonitor} in the {@link TestBug21934573ExceptionInterceptor} the same way as in {@link ErrorReportingExceptionInterceptor}. The
+     * way to reproduce it and observe the deadlock happening is by setting the connection property {@code __useReplConnGroupLocks__} to {@code False}.
+     * 
+     * WARNING! If this test fails there is no guarantee that the JVM will remain stable and won't affect any other tests. It is imperative that this test
+     * passes to ensure other tests results.
+     */
+    public void testBug21934573() throws Exception {
+        Properties props = new Properties();
+        props.setProperty("exceptionInterceptors", TestBug21934573ExceptionInterceptor.class.getName());
+        props.setProperty("replicationConnectionGroup", "deadlock");
+        props.setProperty("allowMultiQueries", "true");
+        props.setProperty("__useReplConnGroupLocks__", "true"); // Set this to 'false' to observe the deadlock.
+
+        final Connection connA = getMasterSlaveReplicationConnection(props);
+        final Connection connB = getMasterSlaveReplicationConnection(props);
+
+        for (final Connection testConn : new Connection[] { connA, connB }) {
+            new Thread(new Runnable() {
+                public void run() {
+                    try {
+                        // Lock on testConn to emulate runtime locking behavior of Repl/LB connections.
+                        synchronized (testConn) {
+                            testConn.createStatement().executeQuery("SELECT column FROM table");
+                        }
+                    } catch (Exception e) {
+                    }
+                }
+            }, testConn.getClass().getSimpleName() + "@" + Integer.toHexString(System.identityHashCode(testConn)) + "_thread").start();
+        }
+
+        // Let the two concurrent threads run concurrently for 2secs, at the most, before checking if they hit a deadlock situation.
+        // Wait two times 1sec as TestBug21934573ExceptionInterceptor.mainThreadLock.notify() should be called twice (once per secondary thread).
+        synchronized (TestBug21934573ExceptionInterceptor.mainThreadLock) {
+            TestBug21934573ExceptionInterceptor.mainThreadLock.wait(1000);
+            TestBug21934573ExceptionInterceptor.mainThreadLock.wait(1000);
+        }
+
+        int deadlockCount = 0;
+        ThreadMXBean threadMXBean = ManagementFactory.getThreadMXBean();
+        long[] threadIds = threadMXBean.findMonitorDeadlockedThreads();
+        if (threadIds != null) {
+            ThreadInfo[] threadInfos = threadMXBean.getThreadInfo(threadIds, Integer.MAX_VALUE);
+            for (ThreadInfo ti : threadInfos) {
+                System.out.println();
+                System.out.println(ti);
+                System.out.println("Stack trace:");
+                for (StackTraceElement ste : ti.getStackTrace()) {
+                    System.out.println("   " + ste);
+                }
+                if (ti.getThreadName().equals("early_syncing_thread") || ti.getThreadName().equals("late_syncing_thread")) {
+                    deadlockCount++;
+                }
+            }
+            if (deadlockCount == 2) {// Acquire the connection's monitor to mimic the behavior of other synchronized methods (like close() or doPing()).
+                fail("Deadlock detected. WARNING: this failure may lead to JVM instability.");
+            } else {
+                fail("Unexpected deadlock detected. Consult system output for more details. WARNING: this failure may lead to JVM instability.");
+            }
+        }
+    }
+
+    /*
+     * Mimics the behavior of ErrorReportingExceptionInterceptor/FabricMySQLConnectionProxy.syncGroupServersToReplicationConnectionGroup() but actuates on any
+     * SQLException (not only communication related exceptions) and calls directly methods changing servers lists from ReplicationConnectionGroup.
+     */
+    public static class TestBug21934573ExceptionInterceptor implements ExceptionInterceptor {
+        static Object mainThreadLock = new Object();
+        private static boolean threadIsWaiting = false;
+        private static final Set<String> replConnGroupLocks = Collections.synchronizedSet(new HashSet<String>());
+
+        private boolean useSyncGroupServersLock = true;
+
+        public void init(com.mysql.jdbc.Connection conn, Properties props) throws SQLException {
+            if (props.containsKey("__useReplConnGroupLocks__")) {
+                this.useSyncGroupServersLock = Boolean.parseBoolean(props.getProperty("__useReplConnGroupLocks__"));
+            }
+        }
+
+        public void destroy() {
+        }
+
+        public SQLException interceptException(SQLException sqlEx, com.mysql.jdbc.Connection conn) {
+            // Make sure both threads execute the code after the synchronized block concurrently.
+            synchronized (TestBug21934573ExceptionInterceptor.class) {
+                if (threadIsWaiting) {
+                    TestBug21934573ExceptionInterceptor.class.notify();
+                } else {
+                    threadIsWaiting = true;
+                    try {
+                        TestBug21934573ExceptionInterceptor.class.wait();
+                    } catch (InterruptedException e) {
+                        e.printStackTrace();
+                    }
+                }
+            }
+
+            com.mysql.jdbc.ReplicationConnectionGroup replConnGrp = ReplicationConnectionGroupManager.getConnectionGroup("deadlock");
+            if (!this.useSyncGroupServersLock || replConnGroupLocks.add(replConnGrp.getGroupName())) {
+                try {
+                    System.out.println("Emulating syncing state in: " + replConnGrp + " on thread " + Thread.currentThread().getName() + ".");
+                    replConnGrp.removeMasterHost("localhost:1234");
+                    replConnGrp.addSlaveHost("localhost:1234");
+                    replConnGrp.removeSlaveHost("localhost:1234", false);
+                    replConnGrp.promoteSlaveToMaster("localhost:1234");
+                } catch (SQLException ex) {
+                    throw new RuntimeException(ex);
+                } finally {
+                    if (this.useSyncGroupServersLock) {
+                        replConnGroupLocks.remove(replConnGrp.getGroupName());
+                    }
+                }
+            } else {
+                System.out.println("Giving up syncing state on thread " + Thread.currentThread() + ". Let the other thread do it!");
+            }
+
+            synchronized (TestBug21934573ExceptionInterceptor.mainThreadLock) {
+                TestBug21934573ExceptionInterceptor.mainThreadLock.notify();
+            }
+            return null;
+        }
+    }
+
+    /**
+     * Tests fix for BUG#21947042, PREFER TLS WHERE SUPPORTED BY MYSQL SERVER.
+     * 
+     * Requires test certificates from testsuite/ssl-test-certs to be installed
+     * on the server being tested.
+     * 
+     * @throws Exception
+     *             if the test fails.
+     */
+    public void testBug21947042() throws Exception {
+        Connection sslConn = null;
+        Properties props = new Properties();
+        props.setProperty("logger", "StandardLogger");
+
+        StandardLogger.startLoggingToBuffer();
+
+        try {
+            int searchFrom = 0;
+            int found = 0;
+
+            // 1. No explicit useSSL
+            sslConn = getConnectionWithProps(props);
+            if (versionMeetsMinimum(5, 7)) {
+                assertTrue(((MySQLConnection) sslConn).getUseSSL());
+                assertFalse(((MySQLConnection) sslConn).getVerifyServerCertificate());
+                assertTrue(((MySQLConnection) sslConn).getIO().isSSLEstablished());
+            } else {
+                assertFalse(((MySQLConnection) sslConn).getUseSSL());
+                assertTrue(((MySQLConnection) sslConn).getVerifyServerCertificate());
+                assertFalse(((MySQLConnection) sslConn).getIO().isSSLEstablished());
+            }
+
+            ResultSet rset = sslConn.createStatement().executeQuery("SHOW STATUS LIKE 'ssl_cipher'");
+            assertTrue(rset.next());
+            String cipher = rset.getString(2);
+            System.out.println("ssl_cipher=" + cipher);
+
+            rset = sslConn.createStatement().executeQuery("SHOW STATUS LIKE 'ssl_version'");
+            assertTrue(rset.next());
+            cipher = rset.getString(2);
+            System.out.println("ssl_version=" + cipher);
+
+            sslConn.close();
+
+            // check for warning
+            String log = StandardLogger.getBuffer().toString();
+            found = log.indexOf(Messages.getString("MysqlIO.SSLWarning"), searchFrom);
+            searchFrom = found + 1;
+            if (versionMeetsMinimum(5, 7)) {
+                assertTrue(found != -1);
+            }
+
+            // 2. Explicit useSSL=false
+            props.setProperty("useSSL", "false");
+            sslConn = getConnectionWithProps(props);
+            assertFalse(((MySQLConnection) sslConn).getUseSSL());
+            assertTrue(((MySQLConnection) sslConn).getVerifyServerCertificate()); // we left with default value here
+            assertFalse(((MySQLConnection) sslConn).getIO().isSSLEstablished());
+
+            rset = sslConn.createStatement().executeQuery("SHOW STATUS LIKE 'ssl_cipher'");
+            assertTrue(rset.next());
+            cipher = rset.getString(2);
+            System.out.println("ssl_cipher=" + cipher);
+
+            rset = sslConn.createStatement().executeQuery("SHOW STATUS LIKE 'ssl_version'");
+            assertTrue(rset.next());
+            cipher = rset.getString(2);
+            System.out.println("ssl_version=" + cipher);
+
+            sslConn.close();
+
+            // check for warning
+            log = StandardLogger.getBuffer().toString();
+            found = log.indexOf(Messages.getString("MysqlIO.SSLWarning"), searchFrom);
+            if (found != -1) {
+                searchFrom = found + 1;
+                fail("Warning is not expected when useSSL is explicitly set to 'false'.");
+            }
+
+            // 3. Explicit useSSL=true
+            props.setProperty("useSSL", "true");
+            props.setProperty("trustCertificateKeyStoreUrl", "file:src/testsuite/ssl-test-certs/test-cert-store");
+            props.setProperty("trustCertificateKeyStoreType", "JKS");
+            props.setProperty("trustCertificateKeyStorePassword", "password");
+            sslConn = getConnectionWithProps(props);
+            assertTrue(((MySQLConnection) sslConn).getUseSSL());
+            assertTrue(((MySQLConnection) sslConn).getVerifyServerCertificate()); // we left with default value here
+            assertTrue(((MySQLConnection) sslConn).getIO().isSSLEstablished());
+
+            rset = sslConn.createStatement().executeQuery("SHOW STATUS LIKE 'ssl_cipher'");
+            assertTrue(rset.next());
+            cipher = rset.getString(2);
+            System.out.println("ssl_cipher=" + cipher);
+
+            rset = sslConn.createStatement().executeQuery("SHOW STATUS LIKE 'ssl_version'");
+            assertTrue(rset.next());
+            cipher = rset.getString(2);
+            System.out.println("ssl_version=" + cipher);
+
+            sslConn.close();
+
+            // check for warning
+            log = StandardLogger.getBuffer().toString();
+            found = log.indexOf(Messages.getString("MysqlIO.SSLWarning"), searchFrom);
+            if (found != -1) {
+                searchFrom = found + 1;
+                fail("Warning is not expected when useSSL is explicitly set to 'false'.");
+            }
+
+        } finally {
+            StandardLogger.dropBuffer();
+        }
+    }
+
+    /**
+     * Tests fix for Bug#56100 - Replication driver routes DML statements to read-only slaves.
+     */
+    public void testBug56100() throws Exception {
+        final String port = getPort(null, new NonRegisteringDriver());
+        final String hostMaster = "master:" + port;
+        final String hostSlave = "slave:" + port;
+
+        final Properties props = new Properties();
+        props.setProperty("statementInterceptors", Bug56100StatementInterceptor.class.getName());
+
+        final ReplicationConnection testConn = getUnreliableReplicationConnection(new String[] { "master", "slave" }, props);
+
+        assertTrue(testConn.isHostMaster(hostMaster));
+        assertTrue(testConn.isHostSlave(hostSlave));
+
+        // verify that current connection is 'master'
+        assertTrue(testConn.isMasterConnection());
+
+        final Statement testStmt1 = testConn.createStatement();
+        testBug56100AssertHost(testStmt1, "master");
+
+        // set connection to read-only state and verify that current connection is 'slave' now
+        testConn.setReadOnly(true);
+        assertFalse(testConn.isMasterConnection());
+
+        final Statement testStmt2 = testConn.createStatement();
+        testBug56100AssertHost(testStmt1, "slave");
+        testBug56100AssertHost(testStmt2, "slave");
+
+        // set connection to read/write state and verify that current connection is 'master' again
+        testConn.setReadOnly(false);
+        assertTrue(testConn.isMasterConnection());
+
+        final Statement testStmt3 = testConn.createStatement();
+        testBug56100AssertHost(testStmt1, "master");
+        testBug56100AssertHost(testStmt2, "master");
+        testBug56100AssertHost(testStmt3, "master");
+
+        // let Connection.close() also close open statements
+        testConn.close();
+
+        assertThrows(SQLException.class, "No operations allowed after statement closed.", new Callable<Void>() {
+            public Void call() throws Exception {
+                testStmt1.execute("SELECT 'Bug56100'");
+                return null;
+            }
+        });
+
+        assertThrows(SQLException.class, "No operations allowed after statement closed.", new Callable<Void>() {
+            public Void call() throws Exception {
+                testStmt2.execute("SELECT 'Bug56100'");
+                return null;
+            }
+        });
+
+        assertThrows(SQLException.class, "No operations allowed after statement closed.", new Callable<Void>() {
+            public Void call() throws Exception {
+                testStmt3.execute("SELECT 'Bug56100'");
+                return null;
+            }
+        });
+    }
+
+    private void testBug56100AssertHost(Statement testStmt, String expectedHost) throws SQLException {
+        this.rs = testStmt.executeQuery("SELECT '<HOST_NAME>'");
+        assertTrue(this.rs.next());
+        assertEquals(expectedHost, this.rs.getString(1));
+        this.rs.close();
+    }
+
+    public static class Bug56100StatementInterceptor extends BaseStatementInterceptor {
+        @Override
+        public ResultSetInternalMethods preProcess(String sql, com.mysql.jdbc.Statement interceptedStatement, com.mysql.jdbc.Connection connection)
+                throws SQLException {
+            if (sql.contains("<HOST_NAME>")) {
+                return (ResultSetInternalMethods) interceptedStatement.executeQuery(sql.replace("<HOST_NAME>", connection.getHost()));
+            }
+            return super.preProcess(sql, interceptedStatement, connection);
+        }
+    }
+
+    /**
+     * Tests fix for WL#8196, Support for TLSv1.2 Protocol.
+     * 
+     * This test requires community server (with yaSSL) in -Dcom.mysql.jdbc.testsuite.url and
+     * commercial server (with OpenSSL) in -Dcom.mysql.jdbc.testsuite.url.sha256default
+     * 
+     * Test certificates from testsuite/ssl-test-certs must be installed on both servers.
+     * 
+     * @throws Exception
+     *             if the test fails.
+     */
+    public void testTLSVersion() throws Exception {
+
+        final String[] testDbUrls;
+        Properties props = new Properties();
+        props.setProperty("allowPublicKeyRetrieval", "true");
+        props.setProperty("useSSL", "true");
+        props.setProperty("requireSSL", "true");
+        props.setProperty("trustCertificateKeyStoreUrl", "file:src/testsuite/ssl-test-certs/test-cert-store");
+        props.setProperty("trustCertificateKeyStoreType", "JKS");
+        props.setProperty("trustCertificateKeyStorePassword", "password");
+
+        if (this.sha256Conn != null && ((MySQLConnection) this.sha256Conn).versionMeetsMinimum(5, 5, 7)) {
+            testDbUrls = new String[] { BaseTestCase.dbUrl, sha256Url };
+        } else {
+            testDbUrls = new String[] { BaseTestCase.dbUrl };
+        }
+
+        for (String testDbUrl : testDbUrls) {
+            System.out.println(testDbUrl);
+            System.out.println(System.getProperty("java.version"));
+            Connection sslConn = getConnectionWithProps(testDbUrl, props);
+            assertTrue(((MySQLConnection) sslConn).getIO().isSSLEstablished());
+
+            ResultSet rset = sslConn.createStatement().executeQuery("SHOW STATUS LIKE 'ssl_version'");
+            assertTrue(rset.next());
+            String tlsVersion = rset.getString(2);
+            System.out.println(tlsVersion);
+            System.out.println();
+
+            if (((MySQLConnection) sslConn).versionMeetsMinimum(5, 7, 10) && Util.getJVMVersion() > 6) {
+                if (Util.isEnterpriseEdition(((MySQLConnection) sslConn).getServerVersion())) {
+                    assertEquals("TLSv1.2", tlsVersion);
+                } else {
+                    assertEquals("TLSv1.1", tlsVersion);
+                }
+            } else {
+                assertEquals("TLSv1", tlsVersion);
+            }
+
+            sslConn.close();
+        }
+    }
+
+    /**
+     * Tests fix for Bug#21286268 - CONNECTOR/J REPLICATION USE MASTER IF SLAVE IS UNAVAILABLE.
+     */
+    public void testBug21286268() throws Exception {
+        final String MASTER = "master";
+        final String SLAVE = "slave";
+
+        final String MASTER_OK = UnreliableSocketFactory.getHostConnectedStatus(MASTER);
+        final String MASTER_FAIL = UnreliableSocketFactory.getHostFailedStatus(MASTER);
+        final String SLAVE_OK = UnreliableSocketFactory.getHostConnectedStatus(SLAVE);
+        final String SLAVE_FAIL = UnreliableSocketFactory.getHostFailedStatus(SLAVE);
+
+        final String[] hosts = new String[] { MASTER, SLAVE };
+        final Properties props = new Properties();
+        props.setProperty("connectTimeout", "100");
+        props.setProperty("retriesAllDown", "2"); // Failed connection attempts will show up twice.
+        final Set<String> downedHosts = new HashSet<String>();
+        Connection testConn = null;
+
+        /*
+         * Initialization case 1: Masters and Slaves up.
+         */
+        downedHosts.clear();
+        UnreliableSocketFactory.flushAllStaticData();
+
+        testConn = getUnreliableReplicationConnection(hosts, props, downedHosts);
+        assertConnectionsHistory(SLAVE_OK, MASTER_OK);
+        testBug21286268AssertConnectedToAndReadOnly(testConn, MASTER, false);
+
+        /*
+         * Initialization case 2a: Masters up and Slaves down (readFromMasterWhenNoSlaves=false).
+         */
+        props.setProperty("readFromMasterWhenNoSlaves", "false");
+        downedHosts.clear();
+        downedHosts.add(SLAVE);
+        UnreliableSocketFactory.flushAllStaticData();
+
+        assertThrows(SQLException.class, "(?s)Communications link failure.*", new Callable<Void>() {
+            @SuppressWarnings("synthetic-access")
+            public Void call() throws Exception {
+                getUnreliableReplicationConnection(hosts, props, downedHosts);
+                return null;
+            }
+        });
+        assertConnectionsHistory(SLAVE_FAIL);
+        props.remove("readFromMasterWhenNoSlaves");
+
+        /*
+         * Initialization case 2b: Masters up and Slaves down (allowSlaveDownConnections=true).
+         */
+        props.setProperty("allowSlaveDownConnections", "true");
+        downedHosts.clear();
+        downedHosts.add(SLAVE);
+        UnreliableSocketFactory.flushAllStaticData();
+
+        testConn = getUnreliableReplicationConnection(hosts, props, downedHosts);
+        assertConnectionsHistory(SLAVE_FAIL, MASTER_OK);
+        testBug21286268AssertConnectedToAndReadOnly(testConn, MASTER, false);
+        props.remove("allowSlaveDownConnections");
+
+        /*
+         * Initialization case 3a: Masters down and Slaves up (allowSlaveDownConnections=false).
+         */
+        props.setProperty("allowSlaveDownConnections", "false");
+        downedHosts.clear();
+        downedHosts.add(MASTER);
+        UnreliableSocketFactory.flushAllStaticData();
+
+        assertThrows(SQLException.class, "(?s)Communications link failure.*", new Callable<Void>() {
+            @SuppressWarnings("synthetic-access")
+            public Void call() throws Exception {
+                getUnreliableReplicationConnection(hosts, props, downedHosts);
+                return null;
+            }
+        });
+        assertConnectionsHistory(SLAVE_OK, MASTER_FAIL, MASTER_FAIL);
+        props.remove("allowSlaveDownConnections");
+
+        /*
+         * Initialization case 3b: Masters down and Slaves up (allowMasterDownConnections=true).
+         */
+        props.setProperty("allowMasterDownConnections", "true");
+        downedHosts.clear();
+        downedHosts.add(MASTER);
+        UnreliableSocketFactory.flushAllStaticData();
+
+        testConn = getUnreliableReplicationConnection(hosts, props, downedHosts);
+        assertConnectionsHistory(SLAVE_OK, MASTER_FAIL, MASTER_FAIL);
+        testBug21286268AssertConnectedToAndReadOnly(testConn, SLAVE, true);
+        props.remove("allowMasterDownConnections");
+
+        /*
+         * Initialization case 4: Masters down and Slaves down (allowMasterDownConnections=[false|true] + allowSlaveDownConnections=[false|true]).
+         */
+        for (int tst = 0; tst < 4; tst++) {
+            boolean allowMasterDownConnections = (tst & 0x1) != 0;
+            boolean allowSlaveDownConnections = (tst & 0x2) != 0;
+
+            String testCase = String.format("Case: %d [ %s | %s ]", tst, allowMasterDownConnections ? "alwMstDn" : "-",
+                    allowSlaveDownConnections ? "alwSlvDn" : "-");
+            System.out.println(testCase);
+
+            props.setProperty("allowMasterDownConnections", Boolean.toString(allowMasterDownConnections));
+            props.setProperty("allowSlaveDownConnections", Boolean.toString(allowSlaveDownConnections));
+            downedHosts.clear();
+            downedHosts.add(MASTER);
+            downedHosts.add(SLAVE);
+            UnreliableSocketFactory.flushAllStaticData();
+
+            assertThrows(SQLException.class, "(?s)Communications link failure.*", new Callable<Void>() {
+                @SuppressWarnings("synthetic-access")
+                public Void call() throws Exception {
+                    getUnreliableReplicationConnection(hosts, props, downedHosts);
+                    return null;
+                }
+            });
+            if (allowSlaveDownConnections) {
+                assertConnectionsHistory(SLAVE_FAIL, SLAVE_FAIL, MASTER_FAIL, MASTER_FAIL);
+            } else {
+                assertConnectionsHistory(SLAVE_FAIL, SLAVE_FAIL);
+            }
+            props.remove("allowMasterDownConnections");
+            props.remove("allowSlaveDownConnections");
+        }
+
+        /*
+         * Run-time case 1: Switching between masters and slaves.
+         */
+        downedHosts.clear();
+        UnreliableSocketFactory.flushAllStaticData();
+
+        // Use Masters.
+        testConn = getUnreliableReplicationConnection(hosts, props, downedHosts);
+        assertConnectionsHistory(SLAVE_OK, MASTER_OK);
+        testBug21286268AssertConnectedToAndReadOnly(testConn, MASTER, false);
+
+        // Use Slaves.
+        testConn.setReadOnly(true);
+        testBug21286268AssertConnectedToAndReadOnly(testConn, SLAVE, true);
+
+        // Use Masters.
+        testConn.setReadOnly(false);
+        testBug21286268AssertConnectedToAndReadOnly(testConn, MASTER, false);
+
+        /*
+         * Run-time case 2a: Running with Masters down (Masters doesn't recover).
+         */
+        downedHosts.clear();
+        UnreliableSocketFactory.flushAllStaticData();
+
+        // Use Masters.
+        testConn = getUnreliableReplicationConnection(hosts, props, downedHosts);
+        testBug21286268AssertConnectedToAndReadOnly(testConn, MASTER, false);
+
+        // Master server down.
+        UnreliableSocketFactory.downHost(MASTER);
+
+        // Use Slaves.
+        testConn.setReadOnly(true);
+        testBug21286268AssertConnectedToAndReadOnly(testConn, SLAVE, true);
+
+        // Use Masters (fail!).
+        testConn.setReadOnly(false);
+        assertConnectionsHistory(SLAVE_OK, MASTER_OK); // No changes so far.
+        {
+            final Connection localTestConn = testConn;
+            assertThrows(SQLException.class, "(?s)Communications link failure.*", new Callable<Void>() {
+                public Void call() throws Exception {
+                    localTestConn.createStatement().executeQuery("SELECT 1");
+                    return null;
+                }
+            });
+        }
+        assertConnectionsHistory(SLAVE_OK, MASTER_OK, MASTER_FAIL, MASTER_FAIL);
+
+        /*
+         * Run-time case 2b: Running with Masters down (Masters recover in time).
+         */
+        downedHosts.clear();
+        UnreliableSocketFactory.flushAllStaticData();
+
+        // Use Masters.
+        testConn = getUnreliableReplicationConnection(hosts, props, downedHosts);
+        assertConnectionsHistory(SLAVE_OK, MASTER_OK);
+        testBug21286268AssertConnectedToAndReadOnly(testConn, MASTER, false);
+
+        // Find Masters conn ID.
+        long connId = ((MySQLConnection) testConn).getId();
+
+        // Master server down.
+        UnreliableSocketFactory.downHost(MASTER);
+        this.stmt.execute("KILL CONNECTION " + connId); // Actually kill the Masters connection at server side.
+
+        // Use Slaves.
+        testConn.setReadOnly(true);
+        testBug21286268AssertConnectedToAndReadOnly(testConn, SLAVE, true);
+
+        // Master server up.
+        UnreliableSocketFactory.dontDownHost(MASTER);
+
+        // Use Masters.
+        testConn.setReadOnly(false);
+        assertConnectionsHistory(SLAVE_OK, MASTER_OK); // No changes so far.
+        {
+            final Connection localTestConn = testConn;
+            assertThrows(SQLException.class, "(?s)Communications link failure.*", new Callable<Void>() {
+                public Void call() throws Exception {
+                    localTestConn.createStatement().executeQuery("SELECT 1");
+                    return null;
+                }
+            });
+        }
+        assertConnectionsHistory(SLAVE_OK, MASTER_OK, MASTER_OK); // Masters connection re-initialized.
+        testBug21286268AssertConnectedToAndReadOnly(testConn, MASTER, false);
+
+        /*
+         * Run-time case 3a: Running with Slaves down (readFromMasterWhenNoSlaves=false).
+         */
+        props.setProperty("readFromMasterWhenNoSlaves", "false");
+        downedHosts.clear();
+        UnreliableSocketFactory.flushAllStaticData();
+
+        // Use Masters.
+        testConn = getUnreliableReplicationConnection(hosts, props, downedHosts);
+        assertConnectionsHistory(SLAVE_OK, MASTER_OK);
+        testBug21286268AssertConnectedToAndReadOnly(testConn, MASTER, false);
+
+        // Find Slaves conn ID.
+        testConn.setReadOnly(true);
+        connId = ((MySQLConnection) testConn).getId();
+        testBug21286268AssertConnectedToAndReadOnly(testConn, SLAVE, true);
+        testConn.setReadOnly(false);
+        testBug21286268AssertConnectedToAndReadOnly(testConn, MASTER, false);
+
+        // Slave server down.
+        UnreliableSocketFactory.downHost(SLAVE);
+        this.stmt.execute("KILL CONNECTION " + connId); // Actually kill the Slaves connection at server side.
+
+        // Use Slaves.
+        testConn.setReadOnly(true);
+        assertConnectionsHistory(SLAVE_OK, MASTER_OK); // No changes so far.
+        {
+            final Connection localTestConn = testConn;
+            assertThrows(SQLException.class, "(?s)Communications link failure.*", new Callable<Void>() {
+                public Void call() throws Exception {
+                    localTestConn.createStatement().executeQuery("SELECT 1");
+                    return null;
+                }
+            });
+        }
+        assertConnectionsHistory(SLAVE_OK, MASTER_OK, SLAVE_FAIL, SLAVE_FAIL); // Failed re-initializing Slaves.
+
+        // Retry using Slaves. Will fail definitely.
+        {
+            final Connection localTestConn = testConn;
+            assertThrows(SQLException.class, "(?s)Communications link failure.*", new Callable<Void>() {
+                public Void call() throws Exception {
+                    localTestConn.setReadOnly(true);
+                    return null;
+                }
+            });
+        }
+        assertConnectionsHistory(SLAVE_OK, MASTER_OK, SLAVE_FAIL, SLAVE_FAIL, SLAVE_FAIL, SLAVE_FAIL); // Failed connecting to Slaves.
+
+        /*
+         * Run-time case 3b: Running with Slaves down (readFromMasterWhenNoSlaves=true).
+         */
+        props.setProperty("readFromMasterWhenNoSlaves", "true");
+        downedHosts.clear();
+        UnreliableSocketFactory.flushAllStaticData();
+
+        // Use Masters.
+        testConn = getUnreliableReplicationConnection(hosts, props, downedHosts);
+        assertConnectionsHistory(SLAVE_OK, MASTER_OK);
+        testBug21286268AssertConnectedToAndReadOnly(testConn, MASTER, false);
+
+        // Find Slaves conn ID.
+        testConn.setReadOnly(true);
+        connId = ((MySQLConnection) testConn).getId();
+        testBug21286268AssertConnectedToAndReadOnly(testConn, SLAVE, true);
+        testConn.setReadOnly(false);
+        testBug21286268AssertConnectedToAndReadOnly(testConn, MASTER, false);
+
+        // Slave server down.
+        UnreliableSocketFactory.downHost(SLAVE);
+        this.stmt.execute("KILL CONNECTION " + connId); // Actually kill the Slaves connection at server side.
+
+        // Use Slaves.
+        testConn.setReadOnly(true);
+        assertConnectionsHistory(SLAVE_OK, MASTER_OK); // No changes so far.
+        {
+            final Connection localTestConn = testConn;
+            assertThrows(SQLException.class, "(?s)Communications link failure.*", new Callable<Void>() {
+                public Void call() throws Exception {
+                    localTestConn.createStatement().executeQuery("SELECT 1");
+                    return null;
+                }
+            });
+        }
+        assertConnectionsHistory(SLAVE_OK, MASTER_OK, SLAVE_FAIL, SLAVE_FAIL); // Failed re-initializing Slaves.
+
+        // Retry using Slaves. Will fall-back to Masters as read-only.
+        testConn.setReadOnly(true);
+        assertConnectionsHistory(SLAVE_OK, MASTER_OK, SLAVE_FAIL, SLAVE_FAIL, SLAVE_FAIL, SLAVE_FAIL); // Failed connecting to Slaves, failed-over to Masters.
+        testBug21286268AssertConnectedToAndReadOnly(testConn, MASTER, true);
+
+        // Use Masters.
+        testConn.setReadOnly(false);
+        testBug21286268AssertConnectedToAndReadOnly(testConn, MASTER, false);
+
+        // Slave server up.
+        UnreliableSocketFactory.dontDownHost(SLAVE);
+
+        // Use Slaves.
+        testConn.setReadOnly(true);
+        assertConnectionsHistory(SLAVE_OK, MASTER_OK, SLAVE_FAIL, SLAVE_FAIL, SLAVE_FAIL, SLAVE_FAIL, SLAVE_OK); // Slaves connection re-initialized.
+        testBug21286268AssertConnectedToAndReadOnly(testConn, SLAVE, true);
+        props.remove("readFromMasterWhenNoSlaves");
+    }
+
+    private void testBug21286268AssertConnectedToAndReadOnly(Connection testConn, String expectedHost, boolean expectedReadOnly) throws SQLException {
+        testConn.createStatement().executeQuery("SELECT 1");
+        assertEquals(expectedHost, ((MySQLConnection) testConn).getHost());
+        assertEquals(expectedReadOnly, testConn.isReadOnly());
     }
 }

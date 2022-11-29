@@ -42,6 +42,9 @@ import java.security.cert.X509Certificate;
 import java.security.interfaces.RSAPublicKey;
 import java.security.spec.X509EncodedKeySpec;
 import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 import java.util.Properties;
 
 import javax.crypto.Cipher;
@@ -75,7 +78,7 @@ public class ExportControlled {
      * 
      * @throws CommunicationsException
      *             if the handshake fails, or if this distribution of
-     *             Connector/J doesn't contain the SSL crytpo hooks needed to
+     *             Connector/J doesn't contain the SSL crypto hooks needed to
      *             perform the handshake.
      */
     protected static void transformSocketToSSLSocket(MysqlIO mysqlIO) throws SQLException {
@@ -84,12 +87,63 @@ public class ExportControlled {
         try {
             mysqlIO.mysqlConnection = sslFact.connect(mysqlIO.host, mysqlIO.port, null);
 
-            // need to force TLSv1, or else JSSE tries to do a SSLv2 handshake which MySQL doesn't understand
-            ((SSLSocket) mysqlIO.mysqlConnection).setEnabledProtocols(new String[] { "TLSv1" });
+            List<String> allowedProtocols = new ArrayList<String>();
+            List<String> supportedProtocols = Arrays.asList(((SSLSocket) mysqlIO.mysqlConnection).getSupportedProtocols());
+            for (String protocol : (mysqlIO.versionMeetsMinimum(5, 6, 0) && Util.isEnterpriseEdition(mysqlIO.getServerVersion()) ? new String[] { "TLSv1.2",
+                    "TLSv1.1", "TLSv1" } : new String[] { "TLSv1.1", "TLSv1" })) {
+                if (supportedProtocols.contains(protocol)) {
+                    allowedProtocols.add(protocol);
+                }
+            }
+            ((SSLSocket) mysqlIO.mysqlConnection).setEnabledProtocols(allowedProtocols.toArray(new String[0]));
 
+            // check allowed cipher suites
             String enabledSSLCipherSuites = mysqlIO.connection.getEnabledSSLCipherSuites();
-            if (enabledSSLCipherSuites != null && enabledSSLCipherSuites.length() > 0) {
-                ((SSLSocket) mysqlIO.mysqlConnection).setEnabledCipherSuites(enabledSSLCipherSuites.split("\\s*,\\s*"));
+            boolean overrideCiphers = enabledSSLCipherSuites != null && enabledSSLCipherSuites.length() > 0;
+
+            List<String> allowedCiphers = null;
+            if (overrideCiphers) {
+                // If "enabledSSLCipherSuites" is set we just check that JVM allows provided values,
+                // we don't disable DH algorithm, that allows c/J to deal with custom server builds with different security restrictions
+                allowedCiphers = new ArrayList<String>();
+                List<String> availableCiphers = Arrays.asList(((SSLSocket) mysqlIO.mysqlConnection).getEnabledCipherSuites());
+                for (String cipher : enabledSSLCipherSuites.split("\\s*,\\s*")) {
+                    if (availableCiphers.contains(cipher)) {
+                        allowedCiphers.add(cipher);
+                    }
+                }
+
+            } else {
+                // If we don't override ciphers, then we check for known restrictions
+                boolean disableDHAlgorithm = false;
+                if (mysqlIO.versionMeetsMinimum(5, 5, 45) && !mysqlIO.versionMeetsMinimum(5, 6, 0) || mysqlIO.versionMeetsMinimum(5, 6, 26)
+                        && !mysqlIO.versionMeetsMinimum(5, 7, 0) || mysqlIO.versionMeetsMinimum(5, 7, 6)) {
+                    // Workaround for JVM bug http://bugs.java.com/bugdatabase/view_bug.do?bug_id=6521495
+                    // Starting from 5.5.45, 5.6.26 and 5.7.6 server the key length used for creating Diffie-Hellman keys has been
+                    // increased from 512 to 2048 bits, while JVMs affected by this bug allow only range from 512 to 1024 (inclusive).
+                    // Bug is fixed in Java 8.
+                    if (Util.getJVMVersion() < 8) {
+                        disableDHAlgorithm = true;
+                    }
+                } else if (Util.getJVMVersion() >= 8) { // TODO check later for Java 9 behavior
+                    // Java 8 default java.security contains jdk.tls.disabledAlgorithms=DH keySize < 768
+                    // That causes handshake failures with older MySQL servers, eg 5.6.11. Thus we have to disable DH for them when running on Java 8+
+                    disableDHAlgorithm = true;
+                }
+
+                if (disableDHAlgorithm) {
+                    allowedCiphers = new ArrayList<String>();
+                    for (String cipher : ((SSLSocket) mysqlIO.mysqlConnection).getEnabledCipherSuites()) {
+                        if (!(disableDHAlgorithm && (cipher.indexOf("_DHE_") > -1 || cipher.indexOf("_DH_") > -1))) {
+                            allowedCiphers.add(cipher);
+                        }
+                    }
+                }
+            }
+
+            // if some ciphers were filtered into allowedCiphers 
+            if (allowedCiphers != null) {
+                ((SSLSocket) mysqlIO.mysqlConnection).setEnabledCipherSuites(allowedCiphers.toArray(new String[0]));
             }
 
             ((SSLSocket) mysqlIO.mysqlConnection).startHandshake();
@@ -115,7 +169,7 @@ public class ExportControlled {
     /**
      * Implementation of internal socket factory to wrap the SSL socket.
      */
-    public static class StandardSSLSocketFactory implements SocketFactory {
+    public static class StandardSSLSocketFactory implements SocketFactory, SocketMetadata {
         private SSLSocket rawSocket = null;
         private final SSLSocketFactory sslFact;
         private final SocketFactory existingSocketFactory;
@@ -139,6 +193,10 @@ public class ExportControlled {
         public Socket connect(String host, int portNumber, Properties props) throws SocketException, IOException {
             this.rawSocket = (SSLSocket) this.sslFact.createSocket(this.existingSocket, host, portNumber, true);
             return this.rawSocket;
+        }
+
+        public boolean isLocallyConnected(ConnectionImpl conn) throws SQLException {
+            return SocketMetadata.Helper.isLocallyConnected(conn);
         }
 
     }

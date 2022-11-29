@@ -35,18 +35,18 @@ import java.util.TimerTask;
 
 import com.mysql.jdbc.ConnectionImpl;
 import com.mysql.jdbc.Messages;
-import com.mysql.jdbc.MultiHostConnectionProxy;
-import com.mysql.jdbc.MultiHostMySQLConnection;
+import com.mysql.jdbc.ReplicationConnectionProxy;
+import com.mysql.jdbc.ReplicationMySQLConnection;
 import com.mysql.jdbc.SQLError;
 
-public class JDBC4MultiHostMySQLConnection extends MultiHostMySQLConnection implements JDBC4MySQLConnection {
+public class JDBC4ReplicationMySQLConnection extends ReplicationMySQLConnection implements JDBC4MySQLConnection {
 
-    public JDBC4MultiHostMySQLConnection(MultiHostConnectionProxy proxy) throws SQLException {
+    public JDBC4ReplicationMySQLConnection(ReplicationConnectionProxy proxy) throws SQLException {
         super(proxy);
     }
 
-    private JDBC4Connection getJDBC4Connection() {
-        return (JDBC4Connection) getThisAsProxy().currentConnection;
+    private JDBC4MySQLConnection getJDBC4Connection() {
+        return (JDBC4MySQLConnection) getActiveMySQLConnection();
     }
 
     public SQLXML createSQLXML() throws SQLException {
@@ -70,9 +70,7 @@ public class JDBC4MultiHostMySQLConnection extends MultiHostMySQLConnection impl
     }
 
     public boolean isValid(int timeout) throws SQLException {
-        synchronized (getThisAsProxy()) {
-            return this.getJDBC4Connection().isValid(timeout);
-        }
+        return this.getJDBC4Connection().isValid(timeout);
     }
 
     public void setClientInfo(Properties properties) throws SQLClientInfoException {

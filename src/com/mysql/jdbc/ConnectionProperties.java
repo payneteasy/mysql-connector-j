@@ -375,6 +375,8 @@ public interface ConnectionProperties {
 
     public boolean getUseSSL();
 
+    boolean isUseSSLExplicit();
+
     public boolean getUseStreamLengthsInPrepStmts();
 
     public boolean getUseTimezone();
@@ -1365,6 +1367,14 @@ public interface ConnectionProperties {
     public boolean getAllowMasterDownConnections();
 
     public void setAllowMasterDownConnections(boolean connectIfMasterDown);
+
+    public boolean getAllowSlaveDownConnections();
+
+    public void setAllowSlaveDownConnections(boolean connectIfSlaveDown);
+
+    public boolean getReadFromMasterWhenNoSlaves();
+
+    public void setReadFromMasterWhenNoSlaves(boolean useMasterIfSlavesDown);
 
     public boolean getReplicationEnableJMX();
 

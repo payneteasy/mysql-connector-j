@@ -23,9 +23,11 @@
 
 package testsuite.regression.jdbc4;
 
+import java.io.ObjectInputStream.GetField;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
+import java.sql.SQLFeatureNotSupportedException;
 import java.sql.SQLNonTransientException;
 import java.sql.SQLTransientException;
 import java.sql.Statement;
@@ -137,12 +139,6 @@ public class ConnectionRegressionTest extends BaseTestCase {
         }
 
         final Properties props = new Properties();
-        final Callable<Void> callableInstance = new Callable<Void>() {
-            public Void call() throws Exception {
-                getConnectionWithProps(props);
-                return null;
-            }
-        };
 
         /*
          * case 1: non verifying server certificate
@@ -152,11 +148,6 @@ public class ConnectionRegressionTest extends BaseTestCase {
         props.setProperty("requireSSL", "true");
         props.setProperty("verifyServerCertificate", "false");
 
-        if (requiresSSLCipherSuitesCustomization()) {
-            assertThrows(SQLException.class, Messages.getString("CommunicationsException.incompatibleSSLCipherSuites"), callableInstance);
-
-            props.setProperty("enabledSSLCipherSuites", CUSTOM_SSL_CIPHERS);
-        }
         getConnectionWithProps(props);
 
         /*
@@ -169,12 +160,6 @@ public class ConnectionRegressionTest extends BaseTestCase {
         props.setProperty("trustCertificateKeyStoreUrl", "file:src/testsuite/ssl-test-certs/test-cert-store");
         props.setProperty("trustCertificateKeyStoreType", "JKS");
         props.setProperty("trustCertificateKeyStorePassword", "password");
-
-        if (requiresSSLCipherSuitesCustomization()) {
-            assertThrows(SQLException.class, Messages.getString("CommunicationsException.incompatibleSSLCipherSuites"), callableInstance);
-
-            props.setProperty("enabledSSLCipherSuites", CUSTOM_SSL_CIPHERS);
-        }
 
         getConnectionWithProps(props);
 
@@ -191,12 +176,6 @@ public class ConnectionRegressionTest extends BaseTestCase {
         System.setProperty("javax.net.ssl.keyStorePassword", "password");
         System.setProperty("javax.net.ssl.trustStore", trustStorePath);
         System.setProperty("javax.net.ssl.trustStorePassword", "password");
-
-        if (requiresSSLCipherSuitesCustomization()) {
-            assertThrows(SQLException.class, Messages.getString("CommunicationsException.incompatibleSSLCipherSuites"), callableInstance);
-
-            props.setProperty("enabledSSLCipherSuites", CUSTOM_SSL_CIPHERS);
-        }
 
         getConnectionWithProps(props);
     }
@@ -278,6 +257,37 @@ public class ConnectionRegressionTest extends BaseTestCase {
             if (c2 != null) {
                 c2.close();
             }
+        }
+    }
+
+    /**
+     * 
+     * @throws Exception
+     */
+    public void testBug56122() throws Exception {
+        for (final Connection testConn : new Connection[] { this.conn, getFailoverConnection(), getLoadBalancedConnection(),
+                getMasterSlaveReplicationConnection() }) {
+            testConn.createClob();
+            testConn.createBlob();
+            testConn.createNClob();
+            testConn.createSQLXML();
+            testConn.isValid(12345);
+            testConn.setClientInfo(new Properties());
+            testConn.setClientInfo("NAME", "VALUE");
+            testConn.getClientInfo();
+            testConn.getClientInfo("CLIENT");
+            assertThrows(SQLFeatureNotSupportedException.class, new Callable<Void>() {
+                public Void call() throws Exception {
+                    testConn.createArrayOf("A_TYPE", null);
+                    return null;
+                }
+            });
+            assertThrows(SQLFeatureNotSupportedException.class, new Callable<Void>() {
+                public Void call() throws Exception {
+                    testConn.createStruct("A_TYPE", null);
+                    return null;
+                }
+            });
         }
     }
 }

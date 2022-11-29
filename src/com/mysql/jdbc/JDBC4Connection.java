@@ -37,7 +37,7 @@ import com.mysql.jdbc.ConnectionImpl;
 import com.mysql.jdbc.Messages;
 import com.mysql.jdbc.SQLError;
 
-public class JDBC4Connection extends ConnectionImpl {
+public class JDBC4Connection extends ConnectionImpl implements JDBC4MySQLConnection {
     private JDBC4ClientInfoProvider infoProvider;
 
     public JDBC4Connection(String hostToConnectTo, int portToConnectTo, Properties info, String databaseToConnectTo, String url) throws SQLException {
@@ -208,7 +208,7 @@ public class JDBC4Connection extends ConnectionImpl {
         return new com.mysql.jdbc.JDBC4NClob(getExceptionInterceptor());
     }
 
-    protected JDBC4ClientInfoProvider getClientInfoProviderImpl() throws SQLException {
+    public JDBC4ClientInfoProvider getClientInfoProviderImpl() throws SQLException {
         synchronized (getConnectionMutex()) {
             if (this.infoProvider == null) {
                 try {

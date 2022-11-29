@@ -34,17 +34,19 @@ import java.util.Properties;
 import java.util.TimerTask;
 
 import com.mysql.jdbc.ConnectionImpl;
+import com.mysql.jdbc.LoadBalancedMySQLConnection;
+import com.mysql.jdbc.LoadBalancedConnectionProxy;
 import com.mysql.jdbc.Messages;
 import com.mysql.jdbc.SQLError;
 
 public class JDBC4LoadBalancedMySQLConnection extends LoadBalancedMySQLConnection implements JDBC4MySQLConnection {
 
-    public JDBC4LoadBalancedMySQLConnection(LoadBalancingConnectionProxy proxy) throws SQLException {
+    public JDBC4LoadBalancedMySQLConnection(LoadBalancedConnectionProxy proxy) throws SQLException {
         super(proxy);
     }
 
-    private JDBC4Connection getJDBC4Connection() {
-        return (JDBC4Connection) this.proxy.currentConnection;
+    private JDBC4MySQLConnection getJDBC4Connection() {
+        return (JDBC4MySQLConnection) getActiveMySQLConnection();
     }
 
     public SQLXML createSQLXML() throws SQLException {
@@ -68,9 +70,7 @@ public class JDBC4LoadBalancedMySQLConnection extends LoadBalancedMySQLConnectio
     }
 
     public boolean isValid(int timeout) throws SQLException {
-        synchronized (proxy) {
-            return this.getJDBC4Connection().isValid(timeout);
-        }
+        return this.getJDBC4Connection().isValid(timeout);
     }
 
     public void setClientInfo(Properties properties) throws SQLClientInfoException {
@@ -118,8 +118,8 @@ public class JDBC4LoadBalancedMySQLConnection extends LoadBalancedMySQLConnectio
         return this.getJDBC4Connection().createNClob();
     }
 
-    protected JDBC4ClientInfoProvider getClientInfoProviderImpl() throws SQLException {
-        synchronized (proxy) {
+    public JDBC4ClientInfoProvider getClientInfoProviderImpl() throws SQLException {
+        synchronized (getThisAsProxy()) {
             return this.getJDBC4Connection().getClientInfoProviderImpl();
         }
     }

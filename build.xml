@@ -137,7 +137,7 @@ com.mysql.jdbc.noCleanBetweenCompiles=yes
 
     <property name="major_version" value="5" />
     <property name="minor_version" value="1" />
-    <property name="subminor_version" value="37" />
+    <property name="subminor_version" value="38" />
     <property name="version_status" value="" />
 
     <property name="version" value="${major_version}.${minor_version}.${subminor_version}${version_status}" />
@@ -146,7 +146,8 @@ com.mysql.jdbc.noCleanBetweenCompiles=yes
     <property name="snapshot.version" value="-1" />
     <property name="extra.version" value="" />
     <property name="full.version" value="${version}${extra.version}${snapshot.version}" />
-    <property name="fullProdName" value="${prodName}-${full.version}" />
+    <property name="extra.product.name" value="" />
+    <property name="fullProdName" value="${prodName}${extra.product.name}-${full.version}" />
     <property name="sourceDir" value="./src" />
     <property name="buildDir" value="./build" />
     <property name="distDir" value="./dist" />
@@ -677,6 +678,8 @@ Java 8 (for JDBC 4+ implementation) is also required. Set the full path to this 
         <mkdir dir="${distDir}" />
         <mkdir dir="${toPackage}" />
         <mkdir dir="${packageDest}" />
+
+        <delete dir="${toPackage}" />
 
         <patternset id="non.test.sources">
             <exclude name="**/*.nb*" />

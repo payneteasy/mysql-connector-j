@@ -64,8 +64,8 @@ public class ConnectionWrapper extends WrapperBase implements Connection {
     static {
         if (Util.isJdbc4()) {
             try {
-                JDBC_4_CONNECTION_WRAPPER_CTOR = Class.forName("com.mysql.jdbc.jdbc2.optional.JDBC4ConnectionWrapper").getConstructor(
-                        new Class[] { MysqlPooledConnection.class, Connection.class, Boolean.TYPE });
+                JDBC_4_CONNECTION_WRAPPER_CTOR = Class.forName("com.mysql.jdbc.jdbc2.optional.JDBC4ConnectionWrapper")
+                        .getConstructor(new Class[] { MysqlPooledConnection.class, Connection.class, Boolean.TYPE });
             } catch (SecurityException e) {
                 throw new RuntimeException(e);
             } catch (NoSuchMethodException e) {
@@ -2760,6 +2760,22 @@ public class ConnectionWrapper extends WrapperBase implements Connection {
         this.mc.setAllowMasterDownConnections(connectIfMasterDown);
     }
 
+    public boolean getAllowSlaveDownConnections() {
+        return this.mc.getAllowSlaveDownConnections();
+    }
+
+    public void setAllowSlaveDownConnections(boolean connectIfSlaveDown) {
+        this.mc.setAllowSlaveDownConnections(connectIfSlaveDown);
+    }
+
+    public boolean getReadFromMasterWhenNoSlaves() {
+        return this.mc.getReadFromMasterWhenNoSlaves();
+    }
+
+    public void setReadFromMasterWhenNoSlaves(boolean useMasterIfSlavesDown) {
+        this.mc.setReadFromMasterWhenNoSlaves(useMasterIfSlavesDown);
+    }
+
     public boolean getReplicationEnableJMX() {
         return this.mc.getReplicationEnableJMX();
     }
@@ -2851,5 +2867,9 @@ public class ConnectionWrapper extends WrapperBase implements Connection {
 
     public void setEnableEscapeProcessing(boolean flag) {
         this.mc.setEnableEscapeProcessing(flag);
+    }
+
+    public boolean isUseSSLExplicit() {
+        return this.mc.isUseSSLExplicit();
     }
 }

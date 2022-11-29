@@ -43,8 +43,6 @@ import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.Callable;
 
-import junit.framework.TestCase;
-
 import com.mysql.jdbc.ConnectionImpl;
 import com.mysql.jdbc.MySQLConnection;
 import com.mysql.jdbc.NonRegisteringDriver;
@@ -53,12 +51,12 @@ import com.mysql.jdbc.ReplicationDriver;
 import com.mysql.jdbc.StringUtils;
 import com.mysql.jdbc.Util;
 
+import junit.framework.TestCase;
+
 /**
  * Base class for all test cases. Creates connections, statements, etc. and closes them.
  */
 public abstract class BaseTestCase extends TestCase {
-    protected final static String CUSTOM_SSL_CIPHERS = "TLS_RSA_WITH_AES_128_CBC_SHA,SSL_RSA_WITH_RC4_128_SHA,SSL_RSA_WITH_3DES_EDE_CBC_SHA,"
-            + "SSL_RSA_WITH_RC4_128_MD5,SSL_RSA_WITH_DES_CBC_SHA";
 
     private final static String ADMIN_CONNECTION_PROPERTY_NAME = "com.mysql.jdbc.testsuite.admin-url";
 
@@ -436,7 +434,6 @@ public abstract class BaseTestCase extends TestCase {
         Properties props = new NonRegisteringDriver().parseURL(dbUrl, null);
 
         String hostname = props.getProperty(NonRegisteringDriver.HOST_PROPERTY_KEY);
-
         if (hostname == null) {
             props.setProperty(NonRegisteringDriver.HOST_PROPERTY_KEY, "localhost");
         } else if (hostname.startsWith(":")) {
@@ -445,12 +442,38 @@ public abstract class BaseTestCase extends TestCase {
         }
 
         String portNumber = props.getProperty(NonRegisteringDriver.PORT_PROPERTY_KEY);
-
         if (portNumber == null) {
             props.setProperty(NonRegisteringDriver.PORT_PROPERTY_KEY, "3306");
         }
 
         return props;
+    }
+
+    protected Properties getHostFreePropertiesFromTestsuiteUrl() throws SQLException {
+        return getHostFreePropertiesFromTestsuiteUrl(null);
+    }
+
+    protected Properties getHostFreePropertiesFromTestsuiteUrl(Properties props) throws SQLException {
+        Properties parsedProps = getPropertiesFromTestsuiteUrl();
+        if (props != null) {
+            parsedProps.putAll(props);
+        }
+        removeHostRelatedProps(parsedProps);
+        return parsedProps;
+    }
+
+    protected void removeHostRelatedProps(Properties props) {
+        props.remove(NonRegisteringDriver.HOST_PROPERTY_KEY);
+        props.remove(NonRegisteringDriver.PORT_PROPERTY_KEY);
+
+        int numHosts = Integer.parseInt(props.getProperty(NonRegisteringDriver.NUM_HOSTS_PROPERTY_KEY));
+
+        for (int i = 1; i <= numHosts; i++) {
+            props.remove(NonRegisteringDriver.HOST_PROPERTY_KEY + "." + i);
+            props.remove(NonRegisteringDriver.PORT_PROPERTY_KEY + "." + i);
+        }
+
+        props.remove(NonRegisteringDriver.NUM_HOSTS_PROPERTY_KEY);
     }
 
     protected int getRowCount(String tableName) throws SQLException {
@@ -591,8 +614,10 @@ public abstract class BaseTestCase extends TestCase {
             }
         } else {
             try {
-                this.conn = DriverManager.getConnection(dbUrl);
                 Properties props = new Properties();
+                props.setProperty("useSSL", "false"); // testsuite is built upon non-SSL default connection
+                this.conn = DriverManager.getConnection(dbUrl, props);
+
                 props.setProperty("allowPublicKeyRetrieval", "true");
                 this.sha256Conn = sha256Url == null ? null : DriverManager.getConnection(sha256Url, props);
             } catch (Exception ex) {
@@ -777,26 +802,6 @@ public abstract class BaseTestCase extends TestCase {
         return Util.isEnterpriseEdition(((MySQLConnection) this.conn).getServerVersion());
     }
 
-    /**
-     * Checks whether all requirements to connect using SSL are met for the default connection
-     */
-    protected boolean requiresSSLCipherSuitesCustomization() throws SQLException {
-        return requiresSSLCipherSuitesCustomization(this.conn);
-    }
-
-    /**
-     * Checks whether all requirements to connect using SSL are met for the given connection
-     * - MySQL 5.5.45+
-     * - MySQL 5.6.26+ (community edition)
-     * - MySQL 5.7.6+ (community edition)
-     */
-    protected boolean requiresSSLCipherSuitesCustomization(Connection c) throws SQLException {
-        MySQLConnection myConn = (MySQLConnection) c;
-        return Util.getJVMVersion() < 8
-                && (myConn.versionMeetsMinimum(5, 5, 45) && !myConn.versionMeetsMinimum(5, 6, 0) || Util.isCommunityEdition(myConn.getServerVersion())
-                        && (myConn.versionMeetsMinimum(5, 6, 26) && !myConn.versionMeetsMinimum(5, 7, 0) || myConn.versionMeetsMinimum(5, 7, 6)));
-    }
-
     protected boolean isClassAvailable(String classname) {
         try {
             Class.forName(classname);
@@ -950,6 +955,35 @@ public abstract class BaseTestCase extends TestCase {
         }
     }
 
+    /**
+     * Asserts the most recent history of connection attempts from the global data in UnreliableSocketFactory.
+     * 
+     * @param expectedConnectionsHistory
+     *            The list of expected events. Use UnreliableSocketFactory.getHostConnectedStatus(String), UnreliableSocketFactory.getHostFailedStatus(String)
+     *            and UnreliableSocketFactory.getHostUnknownStatus(String) to build proper syntax for host+status identification.
+     */
+    protected static void assertConnectionsHistory(String... expectedConnectionsHistory) {
+        List<String> actualConnectionsHistory = UnreliableSocketFactory.getHostsFromLastConnections(expectedConnectionsHistory.length);
+
+        int i = 1;
+        String delimiter = "";
+        StringBuilder expectedHist = new StringBuilder("");
+        for (String hostInfo : expectedConnectionsHistory) {
+            expectedHist.append(delimiter).append(i++).append(hostInfo);
+            delimiter = " ~ ";
+        }
+
+        i = 1;
+        delimiter = "";
+        StringBuilder actualHist = new StringBuilder("");
+        for (String hostInfo : actualConnectionsHistory) {
+            actualHist.append(delimiter).append(i++).append(hostInfo);
+            delimiter = " ~ ";
+        }
+
+        assertEquals("Connections history", expectedHist.toString(), actualHist.toString());
+    }
+
     /*
      * Set default values for primitives. (prevents NPE in Java 1.4 when calling via reflection)
      */
@@ -990,16 +1024,23 @@ public abstract class BaseTestCase extends TestCase {
         }
     }
 
+    protected Connection getFailoverConnection() throws SQLException {
+        return getFailoverConnection(null);
+    }
+
+    protected Connection getFailoverConnection(Properties props) throws SQLException {
+        return DriverManager.getConnection(getMasterSlaveUrl(), getHostFreePropertiesFromTestsuiteUrl(props));
+    }
+
     protected Connection getMasterSlaveReplicationConnection() throws SQLException {
         return getMasterSlaveReplicationConnection(null);
     }
 
     protected Connection getMasterSlaveReplicationConnection(Properties props) throws SQLException {
-        return new ReplicationDriver().connect(getMasterSlaveUrl(), getMasterSlaveProps(props));
+        return new ReplicationDriver().connect(getMasterSlaveUrl(), getHostFreePropertiesFromTestsuiteUrl(props));
     }
 
     protected String getMasterSlaveUrl() throws SQLException {
-
         Properties defaultProps = getPropertiesFromTestsuiteUrl();
         String hostname = defaultProps.getProperty(NonRegisteringDriver.HOST_PROPERTY_KEY);
 
@@ -1027,33 +1068,6 @@ public abstract class BaseTestCase extends TestCase {
         urlBuf.append("/");
 
         return urlBuf.toString();
-    }
-
-    protected Properties getMasterSlaveProps() throws SQLException {
-        return getMasterSlaveProps(null);
-    }
-
-    protected Properties getMasterSlaveProps(Properties props) throws SQLException {
-        Properties parsedProps = getPropertiesFromTestsuiteUrl();
-        if (props != null) {
-            parsedProps.putAll(props);
-        }
-        removeHostRelatedProps(parsedProps);
-        return parsedProps;
-    }
-
-    protected void removeHostRelatedProps(Properties props) {
-        props.remove(NonRegisteringDriver.HOST_PROPERTY_KEY);
-        props.remove(NonRegisteringDriver.PORT_PROPERTY_KEY);
-
-        int numHosts = Integer.parseInt(props.getProperty(NonRegisteringDriver.NUM_HOSTS_PROPERTY_KEY));
-
-        for (int i = 1; i <= numHosts; i++) {
-            props.remove(NonRegisteringDriver.HOST_PROPERTY_KEY + "." + i);
-            props.remove(NonRegisteringDriver.PORT_PROPERTY_KEY + "." + i);
-        }
-
-        props.remove(NonRegisteringDriver.NUM_HOSTS_PROPERTY_KEY);
     }
 
     protected Connection getLoadBalancedConnection(int customHostLocation, String customHost, Properties props) throws SQLException {
@@ -1106,37 +1120,6 @@ public abstract class BaseTestCase extends TestCase {
         return getLoadBalancedConnection(1, "", props);
     }
 
-    protected void copyBasePropertiesIntoProps(Properties props, NonRegisteringDriver d) throws SQLException {
-        Properties testCaseProps = d.parseURL(BaseTestCase.dbUrl, null);
-        String user = testCaseProps.getProperty(NonRegisteringDriver.USER_PROPERTY_KEY);
-
-        if (user != null) {
-            props.setProperty(NonRegisteringDriver.USER_PROPERTY_KEY, user);
-        }
-
-        String password = testCaseProps.getProperty(NonRegisteringDriver.PASSWORD_PROPERTY_KEY);
-
-        if (password != null) {
-            props.setProperty(NonRegisteringDriver.PASSWORD_PROPERTY_KEY, password);
-        }
-
-        String port = testCaseProps.getProperty(NonRegisteringDriver.PORT_PROPERTY_KEY);
-
-        if (port != null) {
-            props.setProperty(NonRegisteringDriver.PORT_PROPERTY_KEY, port);
-        } else {
-            String host = testCaseProps.getProperty(NonRegisteringDriver.HOST_PROPERTY_KEY);
-
-            if (host != null) {
-                String[] hostPort = host.split(":");
-
-                if (hostPort.length > 1) {
-                    props.setProperty(NonRegisteringDriver.PORT_PROPERTY_KEY, hostPort[1]);
-                }
-            }
-        }
-    }
-
     protected String getPort(Properties props, NonRegisteringDriver d) throws SQLException {
         String port = d.parseURL(BaseTestCase.dbUrl, props).getProperty(NonRegisteringDriver.PORT_PROPERTY_KEY);
         if (port == null) {
@@ -1157,23 +1140,19 @@ public abstract class BaseTestCase extends TestCase {
     }
 
     protected Connection getUnreliableMultiHostConnection(String haMode, String[] hostNames, Properties props, Set<String> downedHosts) throws Exception {
-        if (props == null) {
-            props = new Properties();
-        }
-
         if (downedHosts == null) {
             downedHosts = new HashSet<String>();
         }
 
         NonRegisteringDriver driver = new NonRegisteringDriver();
 
-        copyBasePropertiesIntoProps(props, driver);
+        props = getHostFreePropertiesFromTestsuiteUrl(props);
         props.setProperty("socketFactory", "testsuite.UnreliableSocketFactory");
 
         Properties parsedProps = driver.parseURL(BaseTestCase.dbUrl, props);
         String db = parsedProps.getProperty(NonRegisteringDriver.DBNAME_PROPERTY_KEY);
         String port = parsedProps.getProperty(NonRegisteringDriver.PORT_PROPERTY_KEY);
-        String host = getPortFreeHostname(props, driver);
+        String host = getPortFreeHostname(parsedProps, driver);
 
         UnreliableSocketFactory.flushAllStaticData();
 
@@ -1189,8 +1168,6 @@ public abstract class BaseTestCase extends TestCase {
                 UnreliableSocketFactory.downHost(hostName);
             }
         }
-
-        props.remove(NonRegisteringDriver.HOST_PROPERTY_KEY);
 
         if (haMode == null) {
             haMode = "";
@@ -1250,13 +1227,16 @@ public abstract class BaseTestCase extends TestCase {
 
     protected ReplicationConnection getUnreliableReplicationConnection(Set<MockConnectionConfiguration> configs, Properties props) throws Exception {
         NonRegisteringDriver d = new NonRegisteringDriver();
-        this.copyBasePropertiesIntoProps(props, d);
+        props = getHostFreePropertiesFromTestsuiteUrl(props);
         props.setProperty("socketFactory", "testsuite.UnreliableSocketFactory");
+
         Properties parsed = d.parseURL(BaseTestCase.dbUrl, props);
         String db = parsed.getProperty(NonRegisteringDriver.DBNAME_PROPERTY_KEY);
         String port = parsed.getProperty(NonRegisteringDriver.PORT_PROPERTY_KEY);
-        String host = getPortFreeHostname(props, d);
+        String host = getPortFreeHostname(parsed, d);
+
         UnreliableSocketFactory.flushAllStaticData();
+
         StringBuilder hostString = new StringBuilder();
         String glue = "";
         for (MockConnectionConfiguration config : configs) {
@@ -1270,12 +1250,9 @@ public abstract class BaseTestCase extends TestCase {
             if (config.isDowned) {
                 UnreliableSocketFactory.downHost(config.hostName);
             }
-
         }
-        props.remove(NonRegisteringDriver.HOST_PROPERTY_KEY);
 
         return (ReplicationConnection) getConnectionWithProps("jdbc:mysql:replication://" + hostString.toString() + "/" + db, props);
-
     }
 
     protected boolean assertEqualsFSAware(String matchStr, String inStr) throws Exception {

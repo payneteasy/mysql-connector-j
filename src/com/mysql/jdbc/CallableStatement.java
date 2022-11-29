@@ -65,8 +65,8 @@ public class CallableStatement extends PreparedStatement implements java.sql.Cal
                 String jdbc4ClassName = Util.isJdbc42() ? "com.mysql.jdbc.JDBC42CallableStatement" : "com.mysql.jdbc.JDBC4CallableStatement";
                 JDBC_4_CSTMT_2_ARGS_CTOR = Class.forName(jdbc4ClassName)
                         .getConstructor(new Class[] { MySQLConnection.class, CallableStatementParamInfo.class });
-                JDBC_4_CSTMT_4_ARGS_CTOR = Class.forName(jdbc4ClassName).getConstructor(
-                        new Class[] { MySQLConnection.class, String.class, String.class, Boolean.TYPE });
+                JDBC_4_CSTMT_4_ARGS_CTOR = Class.forName(jdbc4ClassName)
+                        .getConstructor(new Class[] { MySQLConnection.class, String.class, String.class, Boolean.TYPE });
             } catch (SecurityException e) {
                 throw new RuntimeException(e);
             } catch (NoSuchMethodException e) {
@@ -252,8 +252,8 @@ public class CallableStatement extends PreparedStatement implements java.sql.Cal
                 int scale = paramTypesRs.getInt(10);
                 short nullability = paramTypesRs.getShort(12);
 
-                CallableStatementParam paramInfoToAdd = new CallableStatementParam(paramName, i++, isInParameter, isOutParameter, jdbcType, typeName,
-                        precision, scale, nullability, inOutModifier);
+                CallableStatementParam paramInfoToAdd = new CallableStatementParam(paramName, i++, isInParameter, isOutParameter, jdbcType, typeName, precision,
+                        scale, nullability, inOutModifier);
 
                 this.parameterList.add(paramInfoToAdd);
                 this.parameterMap.put(paramName, paramInfoToAdd);
@@ -506,8 +506,8 @@ public class CallableStatement extends PreparedStatement implements java.sql.Cal
             if (this.paramInfo != null && this.parameterCount != parameterCountFromMetaData) {
                 this.placeholderToParameterIndexMap = new int[this.parameterCount];
 
-                int startPos = this.callingStoredFunction ? StringUtils.indexOfIgnoreCase(this.originalSql, "SELECT") : StringUtils.indexOfIgnoreCase(
-                        this.originalSql, "CALL");
+                int startPos = this.callingStoredFunction ? StringUtils.indexOfIgnoreCase(this.originalSql, "SELECT")
+                        : StringUtils.indexOfIgnoreCase(this.originalSql, "CALL");
 
                 if (startPos != -1) {
                     int parenOpenPos = this.originalSql.indexOf('(', startPos + 4);
@@ -786,8 +786,8 @@ public class CallableStatement extends PreparedStatement implements java.sql.Cal
                     useCatalog = true;
                 }
 
-                paramTypesRs = dbmd.getProcedureColumns(
-                        this.connection.versionMeetsMinimum(5, 0, 2) && useCatalog ? this.currentCatalog : tmpCatalog/* null */, null, procName, "%");
+                paramTypesRs = dbmd.getProcedureColumns(this.connection.versionMeetsMinimum(5, 0, 2) && useCatalog ? this.currentCatalog : tmpCatalog/* null */,
+                        null, procName, "%");
 
                 boolean hasResults = false;
                 try {
@@ -947,9 +947,9 @@ public class CallableStatement extends PreparedStatement implements java.sql.Cal
         synchronized (checkClosed().getConnectionMutex()) {
             //Fixed for 5.5+
             if (((paramNameIn == null) || (paramNameIn.length() == 0)) && (!hasParametersView())) {
-                throw SQLError.createSQLException(
-                        ((Messages.getString("CallableStatement.0") + paramNameIn) == null) ? Messages.getString("CallableStatement.15") : Messages
-                                .getString("CallableStatement.16"), SQLError.SQL_STATE_ILLEGAL_ARGUMENT, getExceptionInterceptor());
+                throw SQLError.createSQLException(((Messages.getString("CallableStatement.0") + paramNameIn) == null)
+                        ? Messages.getString("CallableStatement.15") : Messages.getString("CallableStatement.16"), SQLError.SQL_STATE_ILLEGAL_ARGUMENT,
+                        getExceptionInterceptor());
             }
 
             if ((paramNameIn == null) && (hasParametersView())) {
@@ -1524,8 +1524,8 @@ public class CallableStatement extends PreparedStatement implements java.sql.Cal
 
             if (this.outputParameterResults == null) {
                 if (this.paramInfo.numberOfParameters() == 0) {
-                    throw SQLError
-                            .createSQLException(Messages.getString("CallableStatement.7"), SQLError.SQL_STATE_ILLEGAL_ARGUMENT, getExceptionInterceptor());
+                    throw SQLError.createSQLException(Messages.getString("CallableStatement.7"), SQLError.SQL_STATE_ILLEGAL_ARGUMENT,
+                            getExceptionInterceptor());
                 }
                 throw SQLError.createSQLException(Messages.getString("CallableStatement.8"), SQLError.SQL_STATE_GENERAL_ERROR, getExceptionInterceptor());
             }
@@ -2035,7 +2035,7 @@ public class CallableStatement extends PreparedStatement implements java.sql.Cal
                         PreparedStatement setPstmt = null;
 
                         try {
-                            setPstmt = (PreparedStatement) this.connection.clientPrepareStatement(queryBuf.toString());
+                            setPstmt = ((Wrapper) this.connection.clientPrepareStatement(queryBuf.toString())).unwrap(PreparedStatement.class);
 
                             if (this.isNull[inParamInfo.index]) {
                                 setPstmt.setBytesNoEscapeNoQuotes(1, "NULL".getBytes());
