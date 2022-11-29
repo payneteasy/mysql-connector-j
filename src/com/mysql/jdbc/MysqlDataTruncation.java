@@ -26,56 +26,51 @@ package com.mysql.jdbc;
 import java.sql.DataTruncation;
 
 /**
- * MySQL wrapper for DataTruncation until the server can support sending all
- * needed information.
- * 
- * @author Mark Matthews
- * 
- * @version $Id: MysqlDataTruncation.java,v 1.1.2.1 2005/05/13 18:58:38
- *          mmatthews Exp $
+ * MySQL wrapper for DataTruncation until the server can support sending all needed information.
  */
 public class MysqlDataTruncation extends DataTruncation {
 
-	static final long serialVersionUID = 3263928195256986226L;
+    static final long serialVersionUID = 3263928195256986226L;
 
-	private String message;
+    private String message;
 
-	private int vendorErrorCode;
-	
-	/**
-	 * Creates a new MysqlDataTruncation exception/warning.
-	 * 
-	 * @param message
-	 *            the message from the server
-	 * @param index
-	 *            of column or parameter
-	 * @param parameter
-	 *            was a parameter?
-	 * @param read
-	 *            was truncated on read?
-	 * @param dataSize
-	 *            size requested
-	 * @param transferSize
-	 *            size actually used
-	 */
-	public MysqlDataTruncation(String message, int index, boolean parameter,
-			boolean read, int dataSize, int transferSize, int vendorErrorCode) {
-		super(index, parameter, read, dataSize, transferSize);
+    private int vendorErrorCode;
 
-		this.message = message;
-		this.vendorErrorCode = vendorErrorCode;
-	}
+    /**
+     * Creates a new MysqlDataTruncation exception/warning.
+     * 
+     * @param message
+     *            the message from the server
+     * @param index
+     *            of column or parameter
+     * @param parameter
+     *            was a parameter?
+     * @param read
+     *            was truncated on read?
+     * @param dataSize
+     *            size requested
+     * @param transferSize
+     *            size actually used
+     */
+    public MysqlDataTruncation(String message, int index, boolean parameter, boolean read, int dataSize, int transferSize, int vendorErrorCode) {
+        super(index, parameter, read, dataSize, transferSize);
 
-	public int getErrorCode() {
-		return this.vendorErrorCode;
-	}
+        this.message = message;
+        this.vendorErrorCode = vendorErrorCode;
+    }
 
-	/*
-	 * (non-Javadoc)
-	 * 
-	 * @see java.lang.Throwable#getMessage()
-	 */
-	public String getMessage() {
-		return super.getMessage() + ": " + this.message; //$NON-NLS-1$
-	}
+    @Override
+    public int getErrorCode() {
+        return this.vendorErrorCode;
+    }
+
+    /*
+     * (non-Javadoc)
+     * 
+     * @see java.lang.Throwable#getMessage()
+     */
+    @Override
+    public String getMessage() {
+        return super.getMessage() + ": " + this.message;
+    }
 }

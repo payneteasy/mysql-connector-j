@@ -24,18 +24,12 @@
 package com.mysql.jdbc;
 
 /**
- * Objects that want to be notified of lifecycle events on a WatchableWriter
- * should implement this interface, and register themselves with setWatcher() on
- * the WatchableWriter instance.
- * 
- * @author Mark Matthews
+ * Objects that want to be notified of lifecycle events on a WatchableWriter should implement this interface, and register themselves with setWatcher() on the
+ * WatchableWriter instance.
  */
 interface WriterWatcher {
-	// ~ Methods
-	// ----------------------------------------------------------------
-
-	/**
-	 * Called when the Writer being watched has .close() called
-	 */
-	void writerClosed(WatchableWriter out);
+    /**
+     * Called when the Writer being watched has .close() called
+     */
+    void writerClosed(WatchableWriter out);
 }

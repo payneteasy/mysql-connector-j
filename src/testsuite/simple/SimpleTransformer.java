@@ -31,25 +31,18 @@ import com.mysql.jdbc.NonRegisteringDriver;
 
 /**
  * Used for testing the ConnectionPropertiesTransform functionality.
- * 
- * @author Mark Matthews
- * 
- * @version $Id: SimpleTransformer.java,v 1.1.2.1 2005/05/13 18:58:37 mmatthews
- *          Exp $
  */
 public class SimpleTransformer implements ConnectionPropertiesTransform {
 
-	/*
-	 * (non-Javadoc)
-	 * 
-	 * @see com.mysql.jdbc.ConnectionPropertiesTransform#transformProperties(java.util.Properties)
-	 */
-	public Properties transformProperties(Properties props) throws SQLException {
-		props
-				.setProperty(NonRegisteringDriver.HOST_PROPERTY_KEY,
-						"albequerque");
+    /*
+     * (non-Javadoc)
+     * 
+     * @see com.mysql.jdbc.ConnectionPropertiesTransform#transformProperties(java.util.Properties)
+     */
+    public Properties transformProperties(Properties props) throws SQLException {
+        props.setProperty(NonRegisteringDriver.HOST_PROPERTY_KEY, "albequerque");
 
-		return props;
-	}
+        return props;
+    }
 
 }

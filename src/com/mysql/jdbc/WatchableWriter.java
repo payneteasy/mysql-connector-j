@@ -27,37 +27,27 @@ import java.io.CharArrayWriter;
 
 /**
  * A java.io.Writer used to write unicode data into Blobs and Clobs
- * 
- * @author Mark Matthews
  */
 class WatchableWriter extends CharArrayWriter {
-	// ~ Instance fields
-	// --------------------------------------------------------
+    private WriterWatcher watcher;
 
-	private WriterWatcher watcher;
+    /**
+     * @see java.io.Writer#close()
+     */
+    @Override
+    public void close() {
+        super.close();
 
-	// ~ Methods
-	// ----------------------------------------------------------------
+        // Send data to watcher
+        if (this.watcher != null) {
+            this.watcher.writerClosed(this);
+        }
+    }
 
-	/**
-	 * @see java.io.Writer#close()
-	 */
-	public void close() {
-		super.close();
-
-		// Send data to watcher
-		if (this.watcher != null) {
-			this.watcher.writerClosed(this);
-		}
-	}
-
-	/**
-	 * DOCUMENT ME!
-	 * 
-	 * @param watcher
-	 *            DOCUMENT ME!
-	 */
-	public void setWatcher(WriterWatcher watcher) {
-		this.watcher = watcher;
-	}
+    /**
+     * @param watcher
+     */
+    public void setWatcher(WriterWatcher watcher) {
+        this.watcher = watcher;
+    }
 }

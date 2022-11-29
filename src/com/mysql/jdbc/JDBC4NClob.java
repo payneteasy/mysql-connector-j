@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2002, 2013, Oracle and/or its affiliates. All rights reserved.
+  Copyright (c) 2002, 2014, Oracle and/or its affiliates. All rights reserved.
 
   The MySQL Connector/J is licensed under the terms of the GPLv2
   <http://www.gnu.org/licenses/old-licenses/gpl-2.0.html>, like most MySQL Connectors.
@@ -25,20 +25,16 @@ package com.mysql.jdbc;
 
 import com.mysql.jdbc.ExceptionInterceptor;
 
-
 /**
  * Simplistic implementation of java.sql.NClob for MySQL Connector/J
- * 
- * @author Tetsuro Ikeda
- * @version $Id: NClob.java 4963 2006-02-21 13:28:14Z tikeda $
  */
 public class JDBC4NClob extends Clob implements java.sql.NClob {
 
-	JDBC4NClob(ExceptionInterceptor exceptionInterceptor) {
+    JDBC4NClob(ExceptionInterceptor exceptionInterceptor) {
         super(exceptionInterceptor);
     }
-	
-	JDBC4NClob(String charDataInit, ExceptionInterceptor exceptionInterceptor) {
+
+    JDBC4NClob(String charDataInit, ExceptionInterceptor exceptionInterceptor) {
         super(charDataInit, exceptionInterceptor);
     }
 }

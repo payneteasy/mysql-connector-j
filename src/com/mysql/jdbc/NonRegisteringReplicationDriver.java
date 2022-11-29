@@ -28,24 +28,21 @@ import java.sql.SQLException;
 import java.util.Properties;
 
 /**
- * Driver that opens two connections, one two a replication master, and another
- * to one or more slaves, and decides to use master when the connection is not
+ * Driver that opens two connections, one two a replication master, and another to one or more slaves, and decides to use master when the connection is not
  * read-only, and use slave(s) when the connection is read-only.
- * 
- * @version $Id: NonRegisteringReplicationDriver.java,v 1.1.2.1 2005/05/13
- *          18:58:37 mmatthews Exp $
  */
 public class NonRegisteringReplicationDriver extends NonRegisteringDriver {
-	public NonRegisteringReplicationDriver() throws SQLException {
-		super();
-	}
+    public NonRegisteringReplicationDriver() throws SQLException {
+        super();
+    }
 
-	/*
-	 * (non-Javadoc)
-	 * 
-	 * @see java.sql.Driver#connect(java.lang.String, java.util.Properties)
-	 */
-	public Connection connect(String url, Properties info) throws SQLException {
-		return connectReplicationConnection(url, info);
-	}
+    /*
+     * (non-Javadoc)
+     * 
+     * @see java.sql.Driver#connect(java.lang.String, java.util.Properties)
+     */
+    @Override
+    public Connection connect(String url, Properties info) throws SQLException {
+        return connectReplicationConnection(url, info);
+    }
 }

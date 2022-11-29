@@ -26,26 +26,22 @@ package com.mysql.jdbc.util;
 import java.util.LinkedHashMap;
 import java.util.Map.Entry;
 
-/**
- * @author Mark Matthews
- * @version $Id$
- */
 public class LRUCache extends LinkedHashMap<Object, Object> {
     private static final long serialVersionUID = 1L;
     protected int maxElements;
 
-	public LRUCache(int maxSize) {
-		super(maxSize, 0.75F, true);
-		this.maxElements = maxSize;
-	}
+    public LRUCache(int maxSize) {
+        super(maxSize, 0.75F, true);
+        this.maxElements = maxSize;
+    }
 
-	/*
-	 * (non-Javadoc)
-	 * 
-	 * @see java.util.LinkedHashMap#removeEldestEntry(java.util.Map.Entry)
-	 */
-	@Override
-	protected boolean removeEldestEntry(Entry<Object, Object> eldest) {
-		return (size() > this.maxElements);
-	}
+    /*
+     * (non-Javadoc)
+     * 
+     * @see java.util.LinkedHashMap#removeEldestEntry(java.util.Map.Entry)
+     */
+    @Override
+    protected boolean removeEldestEntry(Entry<Object, Object> eldest) {
+        return (size() > this.maxElements);
+    }
 }

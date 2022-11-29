@@ -27,83 +27,49 @@ import java.sql.SQLException;
 
 import testsuite.BaseTestCase;
 
-/**
- * 
- * @author Mark Matthews
- * @version $Id$
- */
 public class NumbersTest extends BaseTestCase {
-	// ~ Static fields/initializers
-	// ---------------------------------------------
+    private static final long TEST_BIGINT_VALUE = 6147483647L;
 
-	private static final long TEST_BIGINT_VALUE = 6147483647L;
+    /**
+     * Creates a new NumbersTest object.
+     * 
+     * @param name
+     */
+    public NumbersTest(String name) {
+        super(name);
+    }
 
-	// ~ Constructors
-	// -----------------------------------------------------------
+    /**
+     * Runs all test cases in this test suite
+     * 
+     * @param args
+     */
+    public static void main(String[] args) {
+        junit.textui.TestRunner.run(NumbersTest.class);
+    }
 
-	/**
-	 * Creates a new NumbersTest object.
-	 * 
-	 * @param name
-	 *            DOCUMENT ME!
-	 */
-	public NumbersTest(String name) {
-		super(name);
-	}
+    @Override
+    public void setUp() throws Exception {
+        super.setUp();
+        createTestTable();
+    }
 
-	// ~ Methods
-	// ----------------------------------------------------------------
+    public void testNumbers() throws SQLException {
+        this.rs = this.stmt.executeQuery("SELECT * from number_test");
 
-	/**
-	 * Runs all test cases in this test suite
-	 * 
-	 * @param args
-	 */
-	public static void main(String[] args) {
-		junit.textui.TestRunner.run(NumbersTest.class);
-	}
+        while (this.rs.next()) {
+            long minBigInt = this.rs.getLong(1);
+            long maxBigInt = this.rs.getLong(2);
+            long testBigInt = this.rs.getLong(3);
+            assertTrue("Minimum bigint not stored correctly", (minBigInt == Long.MIN_VALUE));
+            assertTrue("Maximum bigint not stored correctly", (maxBigInt == Long.MAX_VALUE));
+            assertTrue("Test bigint not stored correctly", (TEST_BIGINT_VALUE == testBigInt));
+        }
+    }
 
-	/**
-	 * DOCUMENT ME!
-	 * 
-	 * @throws Exception
-	 *             DOCUMENT ME!
-	 */
-	public void setUp() throws Exception {
-		super.setUp();
-		createTestTable();
-	}
-
-	/**
-	 * DOCUMENT ME!
-	 * 
-	 * @throws SQLException
-	 *             DOCUMENT ME!
-	 */
-	public void testNumbers() throws SQLException {
-		this.rs = this.stmt.executeQuery("SELECT * from number_test");
-
-		while (this.rs.next()) {
-			long minBigInt = this.rs.getLong(1);
-			long maxBigInt = this.rs.getLong(2);
-			long testBigInt = this.rs.getLong(3);
-			assertTrue("Minimum bigint not stored correctly",
-					(minBigInt == Long.MIN_VALUE));
-			assertTrue("Maximum bigint not stored correctly",
-					(maxBigInt == Long.MAX_VALUE));
-			assertTrue("Test bigint not stored correctly",
-					(TEST_BIGINT_VALUE == testBigInt));
-		}
-	}
-
-	private void createTestTable() throws SQLException {
-		createTable("number_test", "(minBigInt bigint, maxBigInt bigint, testBigInt bigint)");
-		this.stmt
-				.executeUpdate("INSERT INTO number_test (minBigInt,maxBigInt,testBigInt) values ("
-						+ Long.MIN_VALUE
-						+ ","
-						+ Long.MAX_VALUE
-						+ ","
-						+ TEST_BIGINT_VALUE + ")");
-	}
+    private void createTestTable() throws SQLException {
+        createTable("number_test", "(minBigInt bigint, maxBigInt bigint, testBigInt bigint)");
+        this.stmt.executeUpdate("INSERT INTO number_test (minBigInt,maxBigInt,testBigInt) values (" + Long.MIN_VALUE + "," + Long.MAX_VALUE + ","
+                + TEST_BIGINT_VALUE + ")");
+    }
 }

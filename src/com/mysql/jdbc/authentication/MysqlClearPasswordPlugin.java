@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2012, Oracle and/or its affiliates. All rights reserved.
+  Copyright (c) 2012, 2014, Oracle and/or its affiliates. All rights reserved.
 
   The MySQL Connector/J is licensed under the terms of the GPLv2
   <http://www.gnu.org/licenses/old-licenses/gpl-2.0.html>, like most MySQL Connectors.
@@ -34,50 +34,49 @@ import com.mysql.jdbc.StringUtils;
 
 /**
  * MySQL Clear Password Authentication Plugin
- *
  */
 public class MysqlClearPasswordPlugin implements AuthenticationPlugin {
-	
-	private String password = null;
 
-	public void init(Connection conn, Properties props) throws SQLException {
-	}
+    private String password = null;
 
-	public void destroy() {
-		this.password = null;
-	}
+    public void init(Connection conn, Properties props) throws SQLException {
+    }
 
-	public String getProtocolPluginName() {
-		return "mysql_clear_password";
-	}
+    public void destroy() {
+        this.password = null;
+    }
 
-	public boolean requiresConfidentiality() {
-		return true;
-	}
+    public String getProtocolPluginName() {
+        return "mysql_clear_password";
+    }
 
-	public boolean isReusable() {
-		return true;
-	}
+    public boolean requiresConfidentiality() {
+        return true;
+    }
 
-	public void setAuthenticationParameters(String user, String password) {
-		this.password = password;
-	}
+    public boolean isReusable() {
+        return true;
+    }
 
-	public boolean nextAuthenticationStep(Buffer fromServer, List<Buffer> toServer) throws SQLException {
-		toServer.clear();
+    public void setAuthenticationParameters(String user, String password) {
+        this.password = password;
+    }
 
-		Buffer bresp = new Buffer(StringUtils.getBytes(this.password != null ? this.password : ""));
+    public boolean nextAuthenticationStep(Buffer fromServer, List<Buffer> toServer) throws SQLException {
+        toServer.clear();
 
-		bresp.setPosition(bresp.getBufLength());
-		int oldBufLength = bresp.getBufLength();
-		
-		bresp.writeByte((byte)0);
-		
-		bresp.setBufLength(oldBufLength + 1);
-		bresp.setPosition(0);
+        Buffer bresp = new Buffer(StringUtils.getBytes(this.password != null ? this.password : ""));
 
-		toServer.add(bresp);
-		return true;
-	}
+        bresp.setPosition(bresp.getBufLength());
+        int oldBufLength = bresp.getBufLength();
+
+        bresp.writeByte((byte) 0);
+
+        bresp.setBufLength(oldBufLength + 1);
+        bresp.setPosition(0);
+
+        toServer.add(bresp);
+        return true;
+    }
 
 }
