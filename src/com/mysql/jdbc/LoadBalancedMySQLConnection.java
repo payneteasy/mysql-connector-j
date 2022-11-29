@@ -39,6 +39,7 @@ import java.util.Timer;
 import java.util.concurrent.Executor;
 
 import com.mysql.jdbc.log.Log;
+import com.mysql.jdbc.profiler.ProfilerEventHandler;
 
 public class LoadBalancedMySQLConnection implements LoadBalancedConnection {
 
@@ -2213,6 +2214,12 @@ public class LoadBalancedMySQLConnection implements LoadBalancedConnection {
 		getActiveMySQLConnection().recachePreparedStatement(pstmt);
 	}
 
+	public void decachePreparedStatement(ServerPreparedStatement pstmt)
+			throws SQLException {
+
+		getActiveMySQLConnection().decachePreparedStatement(pstmt);
+	}
+
 	public void registerQueryExecutionTime(long queryTimeMs) {
 
 		getActiveMySQLConnection().registerQueryExecutionTime(queryTimeMs);
@@ -2676,5 +2683,29 @@ public class LoadBalancedMySQLConnection implements LoadBalancedConnection {
 
 	public void setSessionMaxRows(int max) throws SQLException {
 		getActiveMySQLConnection().setSessionMaxRows(max);
+	}
+
+	public ProfilerEventHandler getProfilerEventHandlerInstance() {
+		return getActiveMySQLConnection().getProfilerEventHandlerInstance();
+	}
+
+	public void setProfilerEventHandlerInstance(ProfilerEventHandler h) {
+		getActiveMySQLConnection().setProfilerEventHandlerInstance(h);
+	}
+
+	public String getServerRSAPublicKeyFile() {
+		return getActiveMySQLConnection().getServerRSAPublicKeyFile();
+	}
+
+	public void setServerRSAPublicKeyFile(String serverRSAPublicKeyFile) throws SQLException {
+		getActiveMySQLConnection().setServerRSAPublicKeyFile(serverRSAPublicKeyFile);
+	}
+
+	public boolean getAllowPublicKeyRetrieval() {
+		return getActiveMySQLConnection().getAllowPublicKeyRetrieval();
+	}
+
+	public void setAllowPublicKeyRetrieval(boolean allowPublicKeyRetrieval) throws SQLException {
+		getActiveMySQLConnection().setAllowPublicKeyRetrieval(allowPublicKeyRetrieval);
 	}
 }

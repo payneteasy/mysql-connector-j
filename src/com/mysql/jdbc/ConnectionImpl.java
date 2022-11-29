@@ -1219,6 +1219,8 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements
 			}
 
 			canHandleAsStatement = !foundLimitWithPlaceholder;
+		} else if (StringUtils.startsWithIgnoreCaseAndWs(sql, "XA ")) {
+			canHandleAsStatement = false;
 		} else if (StringUtils.startsWithIgnoreCaseAndWs(sql, "CREATE TABLE")) {
 			canHandleAsStatement = false;
 		} else if (StringUtils.startsWithIgnoreCaseAndWs(sql, "DO")) {
@@ -3526,7 +3528,6 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements
 		
 		if (exceptionInterceptorClasses != null && !"".equals(exceptionInterceptorClasses)) {
 			this.exceptionInterceptor = new ExceptionInterceptorChain(exceptionInterceptorClasses);
-			this.exceptionInterceptor.init(this, info);
 		}
 		
 		this.usePlatformCharsetConverters = getUseJvmCharsetConverters();
@@ -4766,6 +4767,16 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements
 			if (pstmt.isPoolable()) {
 				synchronized (this.serverSideStatementCache) {
 					this.serverSideStatementCache.put(pstmt.originalSql, pstmt);
+				}
+			}
+		}
+	}
+
+	public void decachePreparedStatement(ServerPreparedStatement pstmt) throws SQLException {
+		synchronized (getConnectionMutex()) {
+			if (pstmt.isPoolable()) {
+				synchronized (this.serverSideStatementCache) {
+					this.serverSideStatementCache.remove(pstmt.originalSql);
 				}
 			}
 		}
@@ -6113,5 +6124,13 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements
 			checkClosed();
 			return getSocketTimeout();
 		}
+	}
+
+	public ProfilerEventHandler getProfilerEventHandlerInstance() {
+		return this.eventSink;
+	}
+
+	public void setProfilerEventHandlerInstance(ProfilerEventHandler h) {
+		this.eventSink = h;
 	}
 }

@@ -1133,34 +1133,23 @@ public class StatementRegressionTest extends BaseTestCase {
 	}
 
 	/**
-	 * Tests the fix for BUG#2671, nulls encoded incorrectly in server-side
-	 * prepared statements.
+	 * Tests the fix for BUG#2671, nulls encoded incorrectly in server-side prepared statements.
 	 * 
 	 * @throws Exception
 	 *             if an error occurs.
 	 */
 	public void testBug2671() throws Exception {
 		if (versionMeetsMinimum(4, 1)) {
-			createTable("test3", "("
-					+ " `field1` int(8) NOT NULL auto_increment,"
+			createTable("test3", "(`field1` int(8) NOT NULL auto_increment,"
 					+ " `field2` int(8) unsigned zerofill default NULL,"
 					+ " `field3` varchar(30) binary NOT NULL default '',"
-					+ " `field4` varchar(100) default NULL,"
-					+ " `field5` datetime NULL default '0000-00-00 00:00:00',"
-					+ " PRIMARY KEY  (`field1`),"
-					+ " UNIQUE KEY `unq_id` (`field2`),"
-					+ " UNIQUE KEY  (`field3`)"
-					+ " )  CHARACTER SET utf8", "InnoDB");
+					+ " `field4` varchar(100) default NULL, `field5` datetime NULL default NULL,"
+					+ " PRIMARY KEY  (`field1`), UNIQUE KEY `unq_id` (`field2`), UNIQUE KEY  (`field3`))"
+					+ " CHARACTER SET utf8", "InnoDB");
 
-			this.stmt
-					.executeUpdate("insert into test3 (field1, field3, field4) values (1,'blewis','Bob Lewis')");
+			this.stmt.executeUpdate("insert into test3 (field1, field3, field4) values (1, 'blewis', 'Bob Lewis')");
 
-			String query = "              " + "UPDATE                   "
-					+ "  test3                  " + "SET                      "
-					+ "  field2=?               " + "  ,field3=?          "
-					+ "  ,field4=?           " + "  ,field5=?        "
-					+ "WHERE                    "
-					+ "  field1 = ?                 ";
+			String query = "UPDATE test3 SET field2=?, field3=?, field4=?, field5=? WHERE field1 = ?";
 
 			java.sql.Date mydate = null;
 
@@ -1173,7 +1162,7 @@ public class StatementRegressionTest extends BaseTestCase {
 			this.pstmt.setInt(5, 1);
 
 			int retval = this.pstmt.executeUpdate();
-			assertTrue(retval == 1);
+			assertEquals(1, retval);
 		}
 	}
 
@@ -1841,6 +1830,9 @@ public class StatementRegressionTest extends BaseTestCase {
 	public void testBug5235() throws Exception {
 		Properties props = new Properties();
 		props.setProperty("zeroDateTimeBehavior", "convertToNull");
+		if (versionMeetsMinimum(5, 7, 4)) {
+			props.put("jdbcCompliantTruncation", "false");
+		}
 
 		Connection convertToNullConn = getConnectionWithProps(props);
 		Statement convertToNullStmt = convertToNullConn.createStatement();
@@ -1856,8 +1848,7 @@ public class StatementRegressionTest extends BaseTestCase {
 			this.rs = ps.executeQuery();
 
 			if (this.rs.next()) {
-				Date d = (Date) this.rs.getObject("field1");
-				System.out.println("date: " + d);
+				assertNull(this.rs.getObject("field1"));
 			}
 		} finally {
 			convertToNullStmt.executeUpdate("DROP TABLE IF EXISTS testBug5235");
@@ -2710,7 +2701,13 @@ public class StatementRegressionTest extends BaseTestCase {
 	 *             .equals() test :(
 	 */
 	public void testServerPrepStmtAndDate() throws Exception {
+		Connection testConn = this.conn;
 		try {
+			if (versionMeetsMinimum(5, 7, 4)) {
+				testConn = getConnectionWithProps("jdbcCompliantTruncation=false");
+				this.stmt = testConn.createStatement();
+			}
+			
 			this.stmt
 					.executeUpdate("DROP TABLE IF EXISTS testServerPrepStmtAndDate");
 			this.stmt.executeUpdate("CREATE TABLE testServerPrepStmtAndDate("
@@ -2772,6 +2769,10 @@ public class StatementRegressionTest extends BaseTestCase {
 		} finally {
 			this.stmt
 					.executeUpdate("DROP TABLE IF EXISTS testServerPrepStmtAndDate");
+			
+			if (testConn != this.conn) {
+				testConn.close();
+			}
 		}
 	}
 
@@ -3903,9 +3904,9 @@ public class StatementRegressionTest extends BaseTestCase {
 			int[] counts = this.pstmt.executeBatch();
 
 			assertEquals(3, counts.length);
-			assertEquals(3, counts[0]);
-			assertEquals(3, counts[1]);
-			assertEquals(3, counts[2]);
+			assertEquals(Statement.SUCCESS_NO_INFO, counts[0]);
+			assertEquals(Statement.SUCCESS_NO_INFO, counts[1]);
+			assertEquals(Statement.SUCCESS_NO_INFO, counts[2]);
 			assertEquals(true,
 					((com.mysql.jdbc.PreparedStatement) this.pstmt)
 							.canRewriteAsMultiValueInsertAtSqlLevel());
@@ -7024,13 +7025,17 @@ public class StatementRegressionTest extends BaseTestCase {
 	 *             if the test fails.
 	 */
 	public void testBug68562() throws Exception {
+		testBug68562BatchWithSize(1);
+		testBug68562BatchWithSize(3);
+	}
 
+	private void testBug68562BatchWithSize(int batchSize) throws Exception {
+		
 		// 5.1 server returns wrong values for found_rows because Bug#46675 was fixed only for 5.5+
 		if (!versionMeetsMinimum(5, 5)) {
 			return;
 		}
 
-		int batchSize = 3;
 		createTable("testBug68562_found", "(id INTEGER NOT NULL PRIMARY KEY, name VARCHAR(255) NOT NULL, version VARCHAR(255)) ENGINE=InnoDB;");
 		createTable("testBug68562_affected", "(id INTEGER NOT NULL PRIMARY KEY, name VARCHAR(255) NOT NULL, version VARCHAR(255)) ENGINE=InnoDB;");
 
@@ -7057,7 +7062,7 @@ public class StatementRegressionTest extends BaseTestCase {
 		// update the inserted records with same values REWRITING THE BATCHED STATEMENTS
 		foundRows = testBug68562ExecuteBatch(batchSize, false, true, false);
 		for(int foundRow : foundRows) {
-			assertEquals(batchSize, foundRow);
+			assertEquals(batchSize > 1 ? Statement.SUCCESS_NO_INFO : batchSize, foundRow);
 		}
 		affectedRows = testBug68562ExecuteBatch(batchSize, true, true, false);
 		for(int affectedRow : affectedRows) {
@@ -7067,11 +7072,11 @@ public class StatementRegressionTest extends BaseTestCase {
 		// update the inserted records with NEW values REWRITING THE BATCHED STATEMENTS
 		foundRows = testBug68562ExecuteBatch(batchSize, false, true, true);
 		for(int foundRow : foundRows) {
-			assertEquals(2 * batchSize, foundRow);
+			assertEquals(batchSize > 1 ? Statement.SUCCESS_NO_INFO : 2 * batchSize, foundRow);
 		}
 		affectedRows = testBug68562ExecuteBatch(batchSize, true, true, true);
 		for(int affectedRow : affectedRows) {
-			assertEquals(2 * batchSize, affectedRow);
+			assertEquals(batchSize > 1 ? Statement.SUCCESS_NO_INFO : 2 * batchSize, affectedRow);
 		}
 	}	
 
@@ -7615,4 +7620,73 @@ public class StatementRegressionTest extends BaseTestCase {
 		assertEquals("0", str);
 	}
 
+	/**
+	 * Tests fix for Bug#66947 (16004987) - Calling ServerPreparedStatement.close() twiche corrupts cached statements
+	 * 
+	 * @throws Exception
+	 */
+	public void testBug66947() throws Exception {
+
+		Connection con = null;
+		try {
+			Properties props = new Properties();
+			props.setProperty("useServerPrepStmts", "true");
+			props.setProperty("cachePrepStmts", "true");
+			props.setProperty("prepStmtCacheSize", "2");
+			
+			con = getConnectionWithProps(props);
+
+			PreparedStatement ps1_1 ;
+			PreparedStatement ps1_2 ;
+			
+			String query = "Select 'a' from dual";
+
+			ps1_1 = con.prepareStatement(query);
+			ps1_1.executeQuery();
+			ps1_1.close();
+
+			ps1_2 = con.prepareStatement(query);
+			assertSame("SSPS should be taken from cache but is not the same.", ps1_1, ps1_2);
+			ps1_2.executeQuery();
+			ps1_2.close();
+			ps1_2.close();
+
+			ps1_1 = con.prepareStatement(query);
+			assertNotSame("SSPS should not be taken from cache but is the same.", ps1_2, ps1_1);
+			ps1_1.executeQuery();
+			ps1_1.close();
+			ps1_1.close();
+
+			// check that removeEldestEntry doesn't remove elements twice
+			PreparedStatement ps2_1;
+			PreparedStatement ps2_2;
+			PreparedStatement ps3_1;
+			PreparedStatement ps3_2;
+
+			ps1_1 = con.prepareStatement("Select 'b' from dual");
+			ps1_1.executeQuery();
+			ps1_1.close();
+			ps2_1 = con.prepareStatement("Select 'c' from dual");
+			ps2_1.executeQuery();
+			ps2_1.close();
+			ps3_1 = con.prepareStatement("Select 'd' from dual");
+			ps3_1.executeQuery();
+			ps3_1.close();
+
+			ps1_2 = con.prepareStatement("Select 'b' from dual");
+			assertNotSame("SSPS should not be taken from cache but is the same.", ps1_1, ps1_2);
+
+			ps2_2 = con.prepareStatement("Select 'c' from dual");
+			assertSame("SSPS should be taken from cache but is not the same.", ps2_1, ps2_2);
+
+			ps3_2 = con.prepareStatement("Select 'd' from dual");
+			assertSame("SSPS should be taken from cache but is not the same.", ps3_1, ps3_2);
+
+		} finally {
+			if (con != null) {
+				con.close();
+			}
+		}
+		
+	}
 }

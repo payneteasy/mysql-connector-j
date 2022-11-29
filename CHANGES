@@ -1,5 +1,43 @@
 # Changelog
 # $Id$
+06-09-14 - Version 5.1.31
+
+  - Fix for Bug#66947 (16004987), Calling ServerPreparedStatement.close() twice corrupts cached statements.
+
+  - Fix for Bug#61213 (18009254), ON DUPLICATE KEY UPDATE breaks generated key list when extended INSERT is used
+
+  - Test cases updated to comply with MySQL 5.7.4 new STRICT_MODE behavior and no longer supported IGNORE clause in
+    ALTER TABLE statement.
+
+  - Added support for sha256_password authentication with RSA encryption.
+
+  - Fix for Bug#71753 (18260918), Bad SSL socket transform.
+
+  - Added tests for changes in GET DIAGNOSTIC syntax introduced in MySQL 5.7.0.
+
+  - Fix for Bug#67803 (16708231), XA commands sent twice to MySQL server.
+    Thanks to Andrej Golovnin for his contribution.
+
+  - Fix for Bug#55680 (16737192), MySQL Connector/J memory leak
+
+  - Fix for Bug#72326 (18598665), Typo in fullDebug.properties - gatherPerMetrics should be gatherPerfMetrics
+
+  - Fix for Bug#72023 (18403456), Avoid byte array creation in MysqlIO#unpackBinaryResultSetRow.
+    Thanks to Andrej Golovnin for his contribution.
+
+  - Fix for Bug#72000 (18402873), java.lang.ArrayIndexOutOfBoundsException on java.sql.ResultSet.getInt(String).
+
+  - Fix for Bug#71850 (18318197), init() is called twice on exception interceptors
+
+  - Fix for Bug#72008 (18389973), Avoid useless object creation in StringUtils#getBytes-methods.
+    Thanks to Andrej Golovnin for his contribution.
+
+  - Fix for Bug#72006 (18403199), Avoid creation of a character array in PreparedStatement$ParseInfo.
+    Thanks to Andrej Golovnin for his contribution.
+    Additionally, unneeded StringBuffer replaced by StringBuilder instances in StringUtils.
+
+  - Fix for Bug#72301 (18549472), Fabric driver swallows exceptions thrown during connection creation using JDBC4
+
 03-28-14 - Version 5.1.30
 
   - Fix for Bug#71679 (18236388), Avoid iterator creation when invoking statement interceptors in MysqlIO.
