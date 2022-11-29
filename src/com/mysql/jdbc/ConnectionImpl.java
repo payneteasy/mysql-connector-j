@@ -2191,6 +2191,10 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements MySQLCon
         // reset max-rows to default value
         this.sessionMaxRows = -1;
 
+        // preconfigure some server variables which are consulted before their initialization from server
+        this.serverVariables = new HashMap<String, String>();
+        this.serverVariables.put("character_set_server", "utf8");
+
         this.io = new MysqlIO(newHost, newPort, mergedProps, getSocketFactoryClassName(), getProxy(), getSocketTimeout(),
                 this.largeRowSizeThreshold.getValueAsInt());
         this.io.doHandshake(this.user, this.password, this.database);
@@ -3238,6 +3242,22 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements MySQLCon
 
             buildCollationMapping();
 
+            // Trying to workaround server collations with index > 255. Such index doesn't fit into server greeting packet, 0 is sent instead.
+            // Now we could set io.serverCharsetIndex according to "collation_server" value.
+            if (this.io.serverCharsetIndex == 0) {
+                String collationServer = this.serverVariables.get("collation_server");
+                if (collationServer != null) {
+                    for (int i = 1; i < CharsetMapping.COLLATION_INDEX_TO_COLLATION_NAME.length; i++) {
+                        if (CharsetMapping.COLLATION_INDEX_TO_COLLATION_NAME[i].equals(collationServer)) {
+                            this.io.serverCharsetIndex = i;
+                        }
+                    }
+                } else {
+                    // We can't do more, just trying to use utf8mb4_general_ci because the most of collations in that range are utf8mb4.
+                    this.io.serverCharsetIndex = 45;
+                }
+            }
+
             LicenseConfiguration.checkLicenseType(this.serverVariables);
 
             String lowerCaseTables = this.serverVariables.get("lower_case_table_names");
@@ -3380,8 +3400,9 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements MySQLCon
         setupServerForTruncationChecks();
     }
 
-    private boolean isQueryCacheEnabled() {
-        return "ON".equalsIgnoreCase(this.serverVariables.get("query_cache_type")) && !"0".equalsIgnoreCase(this.serverVariables.get("query_cache_size"));
+    public boolean isQueryCacheEnabled() {
+        return "YES".equalsIgnoreCase(this.serverVariables.get("have_query_cache")) && "ON".equalsIgnoreCase(this.serverVariables.get("query_cache_type"))
+                && !"0".equalsIgnoreCase(this.serverVariables.get("query_cache_size"));
     }
 
     private int getServerVariableAsInt(String variableName, int fallbackValue) throws SQLException {
@@ -3747,6 +3768,7 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements MySQLCon
                     queryBuf.append(", @@character_set_connection AS character_set_connection");
                     queryBuf.append(", @@character_set_results AS character_set_results");
                     queryBuf.append(", @@character_set_server AS character_set_server");
+                    queryBuf.append(", @@collation_server AS collation_server");
                     queryBuf.append(", @@init_connect AS init_connect");
                     queryBuf.append(", @@interactive_timeout AS interactive_timeout");
                     if (!versionMeetsMinimum(5, 5, 0)) {
@@ -3757,8 +3779,7 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements MySQLCon
                     queryBuf.append(", @@max_allowed_packet AS max_allowed_packet");
                     queryBuf.append(", @@net_buffer_length AS net_buffer_length");
                     queryBuf.append(", @@net_write_timeout AS net_write_timeout");
-                    queryBuf.append(", @@query_cache_size AS query_cache_size");
-                    queryBuf.append(", @@query_cache_type AS query_cache_type");
+                    queryBuf.append(", @@have_query_cache AS have_query_cache");
                     queryBuf.append(", @@sql_mode AS sql_mode");
                     queryBuf.append(", @@system_time_zone AS system_time_zone");
                     queryBuf.append(", @@time_zone AS time_zone");
@@ -3772,6 +3793,18 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements MySQLCon
                             this.serverVariables.put(rsmd.getColumnLabel(i), results.getString(i));
                         }
                     }
+
+                    if ("YES".equalsIgnoreCase(this.serverVariables.get("have_query_cache"))) {
+                        results.close();
+                        results = stmt.executeQuery("SELECT @@query_cache_size AS query_cache_size, @@query_cache_type AS query_cache_type");
+                        if (results.next()) {
+                            ResultSetMetaData rsmd = results.getMetaData();
+                            for (int i = 1; i <= rsmd.getColumnCount(); i++) {
+                                this.serverVariables.put(rsmd.getColumnLabel(i), results.getString(i));
+                            }
+                        }
+                    }
+
                 } else {
                     results = stmt.executeQuery(versionComment + "SHOW VARIABLES");
                     while (results.next()) {
@@ -4254,7 +4287,11 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements MySQLCon
         synchronized (getConnectionMutex()) {
             if (getCachePreparedStatements() && pstmt.isPoolable()) {
                 synchronized (this.serverSideStatementCache) {
-                    this.serverSideStatementCache.put(makePreparedStatementCacheKey(pstmt.currentCatalog, pstmt.originalSql), pstmt);
+                    Object oldServerPrepStmt = this.serverSideStatementCache.put(makePreparedStatementCacheKey(pstmt.currentCatalog, pstmt.originalSql), pstmt);
+                    if (oldServerPrepStmt != null) {
+                        ((ServerPreparedStatement) oldServerPrepStmt).isCached = false;
+                        ((ServerPreparedStatement) oldServerPrepStmt).realClose(true, true);
+                    }
                 }
             }
         }
@@ -5128,7 +5165,11 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements MySQLCon
      */
     public void shutdownServer() throws SQLException {
         try {
-            this.io.sendCommand(MysqlDefs.SHUTDOWN, null, null, false, null, 0);
+            if (versionMeetsMinimum(5, 7, 9)) {
+                execSQL(null, "SHUTDOWN", -1, null, DEFAULT_RESULT_SET_TYPE, DEFAULT_RESULT_SET_CONCURRENCY, false, this.database, null, false);
+            } else {
+                this.io.sendCommand(MysqlDefs.SHUTDOWN, null, null, false, null, 0);
+            }
         } catch (Exception ex) {
             SQLException sqlEx = SQLError.createSQLException(Messages.getString("Connection.UnhandledExceptionDuringShutdown"),
                     SQLError.SQL_STATE_GENERAL_ERROR, getExceptionInterceptor());

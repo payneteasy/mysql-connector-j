@@ -1,6 +1,29 @@
 # Changelog
 # https://dev.mysql.com/doc/relnotes/connector-j/5.1/en/
 
+Version 5.1.43
+
+  - Fix for Bug#26399958, UNABLE TO CONNECT TO MYSQL 8.0.3.
+
+  - Fix for Bug#78313 (21931572), proxies not handling Object.equals(Object) calls correctly.
+
+  - Fix for Bug#85885 (25874048), resultSetConcurrency and resultSetType are swapped in call to prepareStatement.
+
+  - Fix for Bug#74932 (20066806), ConnectionImp Doesn't Close Server Prepared Statement (PreparedStatement Leak).
+
+  - WL#10536, Deprecating COM_SHUTDOWN.
+
+  - Fix for Bug#25650305, GETDATE(),GETTIME() AND GETTIMESTAMP() CALL WITH NULL CALENDAR RETURNS NPE.
+
+  - Fix for Bug#26239946, C/J 5.1 GIS TESTS ARE FAILING WITH MYSQL 8.0.1.
+
+  - Fix for Bug#26090721, CONNECTION FAILING WHEN SERVER STARTED WITH COLLATION UTF8MB4_DE_PB_0900_AI_CI.
+
+  - Fix for Bug#25946965, UPDATE THE TIME ZONE MAPPINGS WITH LATEST TZ DATABASES.
+
+  - Fix for Bug#20182108, INCLUDE CUSTOM LOAD BALANCING STRATEGY USING PLUGIN API.
+    New load-balancing strategy "serverAffinity" and new connection property "serverAffinityOrder" added.
+
 Version 5.1.42
 
   - Fix for Bug#73775 (19531384), DBMD.getProcedureColumns()/.getFunctionColumns() fail to filter by columnPattern.

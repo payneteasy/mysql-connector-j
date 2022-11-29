@@ -8290,4 +8290,171 @@ public class StatementRegressionTest extends BaseTestCase {
             testConn.close();
         } while (useSPS = !useSPS);
     }
+
+    /**
+     * Tests fix for Bug#74932 - ConnectionImp Doesn't Close Server Prepared Statement (PreparedStatement Leak).
+     */
+    public void testBug74932() throws Exception {
+        createTable("testBug74932", "(c1 INT, c2 INT)");
+        this.stmt.executeUpdate("INSERT INTO testBug74932 VALUES (1, 1), (1, 2), (2, 1), (2, 2)");
+
+        String sql1 = "SELECT * FROM testBug74932 WHERE c1 = ?";
+        String sql2 = "SELECT * FROM testBug74932 WHERE c2 = ?";
+
+        // Prepare different statements.
+        Connection testConn = getConnectionWithProps("prepStmtCacheSize=10,cachePrepStmts=true,useServerPrepStmts=true");
+        this.rs = testConn.createStatement().executeQuery("SHOW STATUS LIKE 'Prepared_stmt_count'");
+        assertTrue(this.rs.next());
+        int currPrepCount = this.rs.getInt(2);
+        for (int i = 0; i < 10; i++) {
+            testBug74932ExecuteStmts(testConn, sql1, sql2);
+
+            this.rs = testConn.createStatement().executeQuery("SHOW STATUS LIKE 'Prepared_stmt_count'");
+            assertTrue(this.rs.next());
+            assertEquals(2, this.rs.getInt(2) - currPrepCount);
+        }
+        testConn.close();
+
+        // Prepare same statement.
+        testConn = getConnectionWithProps("prepStmtCacheSize=10,cachePrepStmts=true,useServerPrepStmts=true");
+        this.rs = testConn.createStatement().executeQuery("SHOW STATUS LIKE 'Prepared_stmt_count'");
+        assertTrue(this.rs.next());
+        currPrepCount = this.rs.getInt(2);
+        for (int i = 0; i < 10; i++) {
+            testBug74932ExecuteStmts(testConn, sql1, sql1);
+            this.rs = testConn.createStatement().executeQuery("SHOW STATUS LIKE 'Prepared_stmt_count'");
+            assertTrue(this.rs.next());
+            assertEquals(1, this.rs.getInt(2) - currPrepCount);
+        }
+        testConn.close();
+    }
+
+    private void testBug74932ExecuteStmts(final Connection testConn, final String sqlOuter, final String sqlInner) throws SQLException {
+        PreparedStatement psOuter = null;
+        PreparedStatement psInner = null;
+        ResultSet rsOuter = null;
+        ResultSet rsInner = null;
+
+        psOuter = testConn.prepareStatement(sqlOuter);
+        psOuter.setInt(1, 1);
+        rsOuter = psOuter.executeQuery();
+        for (int i = 0; i < 2; i++) {
+            assertTrue(rsOuter.next());
+            try {
+                psInner = testConn.prepareStatement(sqlInner);
+                psInner.setInt(1, 2);
+                rsInner = psInner.executeQuery();
+                assertTrue(rsInner.next());
+                assertTrue(rsInner.next());
+                assertFalse(rsInner.next());
+            } finally {
+                if (rsInner != null) {
+                    rsInner.close();
+                }
+                psInner.close();
+            }
+        }
+        assertFalse(rsOuter.next());
+        rsOuter.close();
+        rsInner.close();
+        psOuter.close();
+    }
+
+    /**
+     * Tests fix for Bug#78313 - proxies not handling Object.equals(Object) calls correctly.
+     * 
+     * An extended version of this test exists in jdbc4.StatementRegressionTest.
+     */
+    public void testBug78313() throws Exception {
+        Connection testConn;
+
+        // Plain connection.
+        testConn = getConnectionWithProps("");
+        assertFalse(testConn.getClass().getName().matches("^(?:com\\.sun\\.proxy\\.)?\\$Proxy\\d*"));
+        assertTrue(testConn.equals(testConn));
+        this.stmt = testConn.createStatement();
+        assertFalse(this.stmt.getClass().getName().matches("^(?:com\\.sun\\.proxy\\.)?\\$Proxy\\d*"));
+        assertTrue(this.stmt.equals(this.stmt));
+        this.rs = this.stmt.executeQuery("SELECT 'testBug78313'");
+        assertFalse(this.rs.getClass().getName().matches("^(?:com\\.sun\\.proxy\\.)?\\$Proxy\\d*"));
+        assertTrue(this.rs.equals(this.rs));
+        this.pstmt = testConn.prepareStatement("SELECT 'testBug78313'");
+        assertFalse(this.pstmt.getClass().getName().matches("^(?:com\\.sun\\.proxy\\.)?\\$Proxy\\d*"));
+        assertTrue(this.pstmt.equals(this.pstmt));
+        assertFalse(this.rs.getClass().getName().matches("^(?:com\\.sun\\.proxy\\.)?\\$Proxy\\d*"));
+        assertTrue(this.rs.equals(this.rs));
+        testConn.close();
+
+        // Plain connection with proxied result sets.
+        testConn = getConnectionWithProps("statementInterceptors=com.mysql.jdbc.interceptors.ResultSetScannerInterceptor,resultSetScannerRegex=.*");
+        assertFalse(testConn.getClass().getName().matches("^(?:com\\.sun\\.proxy\\.)?\\$Proxy\\d*"));
+        assertTrue(testConn.equals(testConn));
+        this.stmt = testConn.createStatement();
+        assertFalse(this.stmt.getClass().getName().matches("^(?:com\\.sun\\.proxy\\.)?\\$Proxy\\d*"));
+        assertTrue(this.stmt.equals(this.stmt));
+        this.rs = this.stmt.executeQuery("SELECT 'testBug78313'");
+        assertTrue(this.rs.getClass().getName().matches("^(?:com\\.sun\\.proxy\\.)?\\$Proxy\\d*"));
+        assertTrue(this.rs.equals(this.rs));
+        this.pstmt = testConn.prepareStatement("SELECT 'testBug78313'");
+        assertFalse(this.pstmt.getClass().getName().matches("^(?:com\\.sun\\.proxy\\.)?\\$Proxy\\d*"));
+        assertTrue(this.pstmt.equals(this.pstmt));
+        this.rs = this.pstmt.executeQuery();
+        assertTrue(this.rs.getClass().getName().matches("^(?:com\\.sun\\.proxy\\.)?\\$Proxy\\d*"));
+        assertTrue(this.rs.equals(this.rs));
+        testConn.close();
+
+        // Fail-over connection; all JDBC objects are proxied.
+        testConn = getFailoverConnection();
+        assertTrue(testConn.getClass().getName().matches("^(?:com\\.sun\\.proxy\\.)?\\$Proxy\\d*"));
+        assertTrue(testConn.equals(testConn));
+        this.stmt = testConn.createStatement();
+        assertTrue(this.stmt.getClass().getName().matches("^(?:com\\.sun\\.proxy\\.)?\\$Proxy\\d*"));
+        assertTrue(this.stmt.equals(this.stmt));
+        this.rs = this.stmt.executeQuery("SELECT 'testBug78313'");
+        assertTrue(this.rs.getClass().getName().matches("^(?:com\\.sun\\.proxy\\.)?\\$Proxy\\d*"));
+        assertTrue(this.rs.equals(this.rs));
+        this.pstmt = testConn.prepareStatement("SELECT 'testBug78313'");
+        assertTrue(this.pstmt.getClass().getName().matches("^(?:com\\.sun\\.proxy\\.)?\\$Proxy\\d*"));
+        assertTrue(this.pstmt.equals(this.pstmt));
+        this.rs = this.pstmt.executeQuery();
+        assertTrue(this.rs.getClass().getName().matches("^(?:com\\.sun\\.proxy\\.)?\\$Proxy\\d*"));
+        assertTrue(this.rs.equals(this.rs));
+        testConn.close();
+
+        // Load-balanced connection; all JDBC objects are proxied. 
+        testConn = getLoadBalancedConnection();
+        assertTrue(testConn.getClass().getName().matches("^(?:com\\.sun\\.proxy\\.)?\\$Proxy\\d*"));
+        assertTrue(testConn.equals(testConn));
+        this.stmt = testConn.createStatement();
+        assertTrue(this.stmt.getClass().getName().matches("^(?:com\\.sun\\.proxy\\.)?\\$Proxy\\d*"));
+        assertTrue(this.stmt.equals(this.stmt));
+        this.rs = this.stmt.executeQuery("SELECT 'testBug78313'");
+        assertTrue(this.rs.getClass().getName().matches("^(?:com\\.sun\\.proxy\\.)?\\$Proxy\\d*"));
+        assertTrue(this.rs.equals(this.rs));
+        this.pstmt = testConn.prepareStatement("SELECT 'testBug78313'");
+        assertTrue(this.pstmt.getClass().getName().matches("^(?:com\\.sun\\.proxy\\.)?\\$Proxy\\d*"));
+        assertTrue(this.pstmt.equals(this.pstmt));
+        this.rs = this.pstmt.executeQuery();
+        assertTrue(this.rs.getClass().getName().matches("^(?:com\\.sun\\.proxy\\.)?\\$Proxy\\d*"));
+        assertTrue(this.rs.equals(this.rs));
+        testConn.close();
+
+        // Replication connection; all JDBC objects are proxied.
+        testConn = getMasterSlaveReplicationConnection();
+        assertTrue(testConn.getClass().getName().matches("^(?:com\\.sun\\.proxy\\.)?\\$Proxy\\d*"));
+        assertTrue(testConn.equals(testConn));
+        this.stmt = testConn.createStatement();
+        assertTrue(this.stmt.getClass().getName().matches("^(?:com\\.sun\\.proxy\\.)?\\$Proxy\\d*"));
+        assertTrue(this.stmt.equals(this.stmt));
+        this.rs = this.stmt.executeQuery("SELECT 'testBug78313'");
+        assertTrue(this.rs.getClass().getName().matches("^(?:com\\.sun\\.proxy\\.)?\\$Proxy\\d*"));
+        assertTrue(this.rs.equals(this.rs));
+        this.pstmt = testConn.prepareStatement("SELECT 'testBug78313'");
+        assertTrue(this.pstmt.getClass().getName().matches("^(?:com\\.sun\\.proxy\\.)?\\$Proxy\\d*"));
+        assertTrue(this.pstmt.equals(this.pstmt));
+        this.rs = this.pstmt.executeQuery();
+        assertTrue(this.rs.getClass().getName().matches("^(?:com\\.sun\\.proxy\\.)?\\$Proxy\\d*"));
+        assertTrue(this.rs.equals(this.rs));
+        testConn.close();
+    }
 }
