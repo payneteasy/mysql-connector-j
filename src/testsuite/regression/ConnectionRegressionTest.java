@@ -55,6 +55,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Calendar;
 import java.util.Collections;
 import java.util.Date;
@@ -1805,7 +1806,9 @@ public class ConnectionRegressionTest extends BaseTestCase {
             loggedConn = getConnectionWithProps(props);
             loggedConn.getTransactionIsolation();
 
-            if (versionMeetsMinimum(4, 0, 3)) {
+            if (versionMeetsMinimum(8, 0, 3)) {
+                assertEquals(-1, StandardLogger.getBuffer().toString().indexOf("SHOW VARIABLES LIKE 'transaction_isolation'"));
+            } else if (versionMeetsMinimum(4, 0, 3)) {
                 assertEquals(-1, StandardLogger.getBuffer().toString().indexOf("SHOW VARIABLES LIKE 'tx_isolation'"));
             }
         } finally {
@@ -7538,8 +7541,10 @@ public class ConnectionRegressionTest extends BaseTestCase {
             assertEquals(serverVariables.get("max_allowed_packet"), con.getServerVariable("max_allowed_packet"));
             assertEquals(serverVariables.get("net_buffer_length"), con.getServerVariable("net_buffer_length"));
             assertEquals(serverVariables.get("net_write_timeout"), con.getServerVariable("net_write_timeout"));
-            assertEquals(serverVariables.get("have_query_cache"), con.getServerVariable("have_query_cache"));
-            if ("YES".equalsIgnoreCase(serverVariables.get("have_query_cache"))) {
+            if (con.versionMeetsMinimum(8, 0, 3)) {
+                assertEquals(serverVariables.get("have_query_cache"), con.getServerVariable("have_query_cache"));
+            }
+            if (!con.versionMeetsMinimum(8, 0, 3) || "YES".equalsIgnoreCase(serverVariables.get("have_query_cache"))) {
                 assertEquals(serverVariables.get("query_cache_size"), con.getServerVariable("query_cache_size"));
                 assertEquals(serverVariables.get("query_cache_type"), con.getServerVariable("query_cache_type"));
             }
@@ -7553,7 +7558,11 @@ public class ConnectionRegressionTest extends BaseTestCase {
 
             assertEquals(serverVariables.get("system_time_zone"), con.getServerVariable("system_time_zone"));
             assertEquals(serverVariables.get("time_zone"), con.getServerVariable("time_zone"));
-            assertEquals(serverVariables.get("tx_isolation"), con.getServerVariable("tx_isolation"));
+            if (con.versionMeetsMinimum(8, 0, 3)) {
+                assertEquals(serverVariables.get("transaction_isolation"), con.getServerVariable("transaction_isolation"));
+            } else {
+                assertEquals(serverVariables.get("tx_isolation"), con.getServerVariable("tx_isolation"));
+            }
             assertEquals(serverVariables.get("wait_timeout"), con.getServerVariable("wait_timeout"));
             if (!versionMeetsMinimum(5, 5, 0)) {
                 assertEquals(serverVariables.get("language"), con.getServerVariable("language"));
@@ -8459,7 +8468,13 @@ public class ConnectionRegressionTest extends BaseTestCase {
             ResultSet rset = sslConn.createStatement().executeQuery("SHOW STATUS LIKE 'ssl_version'");
             assertTrue(rset.next());
             String tlsVersion = rset.getString(2);
-            System.out.println(tlsVersion);
+            System.out.println("TLS version: " + tlsVersion);
+            System.out.println();
+            System.out.println("MySQL version: " + ((MySQLConnection) sslConn).getServerVersion());
+            String etp = ((MySQLConnection) sslConn).getEnabledTLSProtocols();
+            System.out.println("enabledTLSProtocols: " + etp);
+            System.out.println();
+            System.out.println("JVM version: " + Util.getJVMVersion());
             System.out.println();
 
             if (((MySQLConnection) sslConn).versionMeetsMinimum(5, 7, 10) && Util.getJVMVersion() > 6) {
@@ -8472,6 +8487,79 @@ public class ConnectionRegressionTest extends BaseTestCase {
                 assertEquals("TLSv1", tlsVersion);
             }
 
+            sslConn.close();
+        }
+    }
+
+    /**
+     * Tests fix for Bug#87379. This allows TLS version to be overridden through a new configuration
+     * option - enabledTLSProtocols. When set to some combination of TLSv1, TLSv1.1, or TLSv1.2 (comma-
+     * separated, no spaces), the default behaviour restricting the TLS version based on JRE and MySQL
+     * Server version is bypassed to enable or restrict specific TLS versions.
+     * 
+     * This test requires community server (with yaSSL) in -Dcom.mysql.jdbc.testsuite.url and
+     * commercial server (with OpenSSL) in -Dcom.mysql.jdbc.testsuite.url.sha256default
+     * 
+     * Test certificates from testsuite/ssl-test-certs must be installed on both servers.
+     * 
+     * @throws Exception
+     *             if the test fails.
+     */
+    public void testEnableTLSVersion() throws Exception {
+
+        final String[] testDbUrls;
+        Properties props = new Properties();
+        props.setProperty("allowPublicKeyRetrieval", "true");
+        props.setProperty("useSSL", "true");
+        props.setProperty("requireSSL", "true");
+        props.setProperty("trustCertificateKeyStoreUrl", "file:src/testsuite/ssl-test-certs/ca-truststore");
+        props.setProperty("trustCertificateKeyStoreType", "JKS");
+        props.setProperty("trustCertificateKeyStorePassword", "password");
+
+        if (this.sha256Conn != null && ((MySQLConnection) this.sha256Conn).versionMeetsMinimum(5, 5, 7)) {
+            testDbUrls = new String[] { BaseTestCase.dbUrl, sha256Url };
+        } else {
+            testDbUrls = new String[] { BaseTestCase.dbUrl };
+        }
+
+        for (String testDbUrl : testDbUrls) {
+            System.out.println(testDbUrl);
+            System.out.println(System.getProperty("java.version"));
+            Connection sslConn = getConnectionWithProps(testDbUrl, props);
+            assertTrue(((MySQLConnection) sslConn).getIO().isSSLEstablished());
+            List<String> expectedProtocols = new ArrayList<String>();
+            expectedProtocols.add("TLSv1");
+            if (Util.getJVMVersion() > 6 && ((MySQLConnection) sslConn).versionMeetsMinimum(5, 7, 10)) {
+                ResultSet rs1 = sslConn.createStatement().executeQuery("SELECT @@global.tls_version");
+                assertTrue(rs1.next());
+                String supportedTLSVersions = rs1.getString(1);
+                System.out.println("Server reported TLS version support: " + supportedTLSVersions);
+                expectedProtocols.addAll(Arrays.asList(supportedTLSVersions.split("\\s*,\\s*")));
+            }
+
+            String[] testingProtocols = { "TLSv1.2", "TLSv1.1", "TLSv1" };
+            for (String protocol : testingProtocols) {
+                Properties testProps = new Properties();
+                testProps.putAll(props);
+                testProps.put("enabledTLSProtocols", protocol);
+                System.out.println("Testing " + protocol + " expecting connection: " + expectedProtocols.contains(protocol));
+                try {
+                    Connection tlsConn = getConnectionWithProps(testDbUrl, testProps);
+                    if (!expectedProtocols.contains(protocol)) {
+                        fail("Expected to fail connection with " + protocol + " due to lack of server support.");
+                    }
+                    ResultSet rset = tlsConn.createStatement().executeQuery("SHOW STATUS LIKE 'ssl_version'");
+                    assertTrue(rset.next());
+                    String tlsVersion = rset.getString(2);
+                    assertEquals(protocol, tlsVersion);
+                    tlsConn.close();
+                } catch (Exception e) {
+                    if (expectedProtocols.contains(protocol)) {
+                        e.printStackTrace();
+                        fail("Expected to be able to connect with " + protocol + " protocol, but failed.");
+                    }
+                }
+            }
             sslConn.close();
         }
     }

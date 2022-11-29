@@ -1,6 +1,20 @@
 # Changelog
 # https://dev.mysql.com/doc/relnotes/connector-j/5.1/en/
 
+Version 5.1.44
+
+  - Fix for Bug#87429 (26633984), repeated close of ServerPreparedStatement causes memory leak.
+    Thanks to Eduard Gurskiy for his contribution.
+
+  - Fix for Bug#87379 (26646676), Perform actual TLS capabilities check when restricting TLSv1.2.
+    Thanks to Todd Farmer for his contribution.
+
+  - Fix for Bug#85601 (25777822), Unit notation is missing in the description of the property involved in the time.
+
+  - Fix for Bug#87153 (26501245), INCORRECT RESULT OF DBMD.GETVERSIONCOLUMNS() AGAINST MYSQL 8.0.2+.
+
+  - Fix for Bug#26440544, CONNECTOR/J SHOULD NOT USE TX_{READ_ONLY,ISOLATION} WHICH IS PLANNED FOR REMOVAL.
+
 Version 5.1.43
 
   - Fix for Bug#26399958, UNABLE TO CONNECT TO MYSQL 8.0.3.
