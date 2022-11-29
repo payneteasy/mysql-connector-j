@@ -215,9 +215,6 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements
 							SQLError.SQL_STATE_ILLEGAL_ARGUMENT, getExceptionInterceptor());
 				}
 
-				this.locationOfOnDuplicateKeyUpdate = getOnDuplicateKeyLocation(sql);
-				this.isOnDuplicateKeyUpdate = this.locationOfOnDuplicateKeyUpdate != -1;
-				
 				this.lastUsed = System.currentTimeMillis();
 
 				String quotedIdentifierString = dbmd.getIdentifierQuoteString();
@@ -254,6 +251,12 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements
 						// Determine what kind of statement we're doing (_S_elect,
 						// _I_nsert, etc.)
 						this.firstStmtChar = Character.toUpperCase(c);
+						
+						// no need to search for "ON DUPLICATE KEY UPDATE" if not an INSERT statement
+						if (this.firstStmtChar == 'I') {
+							this.locationOfOnDuplicateKeyUpdate = getOnDuplicateKeyLocation(sql);
+							this.isOnDuplicateKeyUpdate = this.locationOfOnDuplicateKeyUpdate != -1;
+						}
 					}
 
 					if (!noBackslashEscapes &&
@@ -374,11 +377,11 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements
 						if (converter != null) {
 							this.staticSql[i] = StringUtils.getBytes(sql,
 									converter, encoding, connection
-									.getServerCharacterEncoding(), begin,
+									.getServerCharset(), begin,
 									len, connection.parserKnowsUnicode(), getExceptionInterceptor());
 						} else {
 							this.staticSql[i] = StringUtils.getBytes(sql, encoding,
-									connection.getServerCharacterEncoding(), begin, len,
+									connection.getServerCharset(), begin, len,
 									connection.parserKnowsUnicode(), conn, getExceptionInterceptor());
 						}
 					}
@@ -448,13 +451,10 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements
 
 			while (indexOfValues == -1) {
 				if (quoteCharStr.length() > 0) {
-					indexOfValues = StringUtils.indexOfIgnoreCaseRespectQuotes(
-							valuesSearchStart,
-							originalSql, "VALUES", quoteCharStr.charAt(0), false);
+					indexOfValues = StringUtils.indexOfIgnoreCase(valuesSearchStart, originalSql, "VALUES",
+							quoteCharStr, quoteCharStr, StringUtils.SEARCH_MODE__MRK_COM_WS);
 				} else {
-					indexOfValues = StringUtils.indexOfIgnoreCase(valuesSearchStart, 
-							originalSql,
-							"VALUES");
+					indexOfValues = StringUtils.indexOfIgnoreCase(valuesSearchStart, originalSql, "VALUES");
 				}
 				
 				if (indexOfValues > 0) {
@@ -2434,7 +2434,7 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements
 				} else {
 					commentAsBytes = StringUtils.getBytes(statementComment, this.charConverter,
 							this.charEncoding, this.connection
-									.getServerCharacterEncoding(), this.connection
+									.getServerCharset(), this.connection
 									.parserKnowsUnicode(), getExceptionInterceptor());
 				}
 				
@@ -3708,7 +3708,7 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements
 			} else {
 				parameterAsBytes = StringUtils.getBytes(val, this.charConverter,
 						this.charEncoding, this.connection
-								.getServerCharacterEncoding(), this.connection
+								.getServerCharset(), this.connection
 								.parserKnowsUnicode(), getExceptionInterceptor());
 			}
 	
@@ -4115,7 +4115,7 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements
 							setBytes(parameterIndex, StringUtils.getBytes(
 									parameterObj.toString(), this.charConverter,
 									this.charEncoding, this.connection
-											.getServerCharacterEncoding(),
+											.getServerCharset(),
 									this.connection.parserKnowsUnicode(), getExceptionInterceptor()));
 						}
 	
@@ -4351,7 +4351,7 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements
 						if (!this.isLoadDataQuery) {
 							parameterAsBytes = StringUtils.getBytes(quotedString.toString(),
 									this.charConverter, this.charEncoding,
-									this.connection.getServerCharacterEncoding(),
+									this.connection.getServerCharset(),
 									this.connection.parserKnowsUnicode(), getExceptionInterceptor());
 						} else {
 							// Send with platform character encoding
@@ -4365,7 +4365,7 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements
 						if (!this.isLoadDataQuery) {
 							parameterAsBytes = StringUtils.getBytes(x,
 									this.charConverter, this.charEncoding,
-									this.connection.getServerCharacterEncoding(),
+									this.connection.getServerCharset(),
 									this.connection.parserKnowsUnicode(), getExceptionInterceptor());
 						} else {
 							// Send with platform character encoding
@@ -4475,12 +4475,12 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements
 					if (needsQuoted) {
 						parameterAsBytes = StringUtils.getBytesWrapped(parameterAsString,
 							'\'', '\'', this.charConverter, this.charEncoding, this.connection
-									.getServerCharacterEncoding(), this.connection
+									.getServerCharset(), this.connection
 									.parserKnowsUnicode(), getExceptionInterceptor());
 					} else {
 						parameterAsBytes = StringUtils.getBytes(parameterAsString,
 								this.charConverter, this.charEncoding, this.connection
-										.getServerCharacterEncoding(), this.connection
+										.getServerCharset(), this.connection
 										.parserKnowsUnicode(), getExceptionInterceptor());
 					}
 				} else {
@@ -5275,7 +5275,7 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements
 		        if (!this.isLoadDataQuery) {
 		            parameterAsBytes = StringUtils.getBytes(parameterAsString,
 		                    this.connection.getCharsetConverter("UTF-8"), "UTF-8", 
-		                            this.connection.getServerCharacterEncoding(),
+		                            this.connection.getServerCharset(),
 		                            this.connection.parserKnowsUnicode(), getExceptionInterceptor());
 		        } else {
 		            // Send with platform character encoding
@@ -5413,14 +5413,10 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements
 
 				if (parameterTypes[i] == Types.BINARY
 						|| parameterTypes[i] == Types.BLOB) {
-					charsetIndex = 63;
+					charsetIndex = CharsetMapping.MYSQL_COLLATION_INDEX_binary;
 				} else {
 					try {
-						String mysqlEncodingName = CharsetMapping
-								.getMysqlEncodingForJavaEncoding(connection
-										.getEncoding(), connection);
-						charsetIndex = CharsetMapping
-								.getCharsetIndexForMysqlEncodingName(mysqlEncodingName);
+						charsetIndex = CharsetMapping.getCollationIndexForJavaEncoding(connection.getEncoding(), connection);
 					} catch (SQLException ex) {
 						throw ex;
 					} catch (RuntimeException ex) {
@@ -5618,18 +5614,13 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements
 					locationOfOnDuplicateKeyUpdate, sql, " UPDATE ");
 
 			if (updateClausePos != -1) {
-				rewritableOdku = StringUtils
-						.indexOfIgnoreCaseRespectMarker(updateClausePos,
-								sql, "LAST_INSERT_ID", "\"'`", "\"'`",
-								false) == -1;
+				rewritableOdku = StringUtils.indexOfIgnoreCase(updateClausePos, sql, "LAST_INSERT_ID", "\"'`", "\"'`",
+						StringUtils.SEARCH_MODE__MRK_COM_WS) == -1;
 			}
 		}
 
-		return StringUtils
-				.startsWithIgnoreCaseAndWs(sql, "INSERT",
-						statementStartPos)
-				&& StringUtils.indexOfIgnoreCaseRespectMarker(
-						statementStartPos, sql, "SELECT", "\"'`",
-						"\"'`", false) == -1 && rewritableOdku;
+		return StringUtils.startsWithIgnoreCaseAndWs(sql, "INSERT", statementStartPos)
+				&& StringUtils.indexOfIgnoreCase(statementStartPos, sql, "SELECT", "\"'`", "\"'`",
+						StringUtils.SEARCH_MODE__MRK_COM_WS) == -1 && rewritableOdku;
 	}
 }

@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2005, 2013, Oracle and/or its affiliates. All rights reserved.
+  Copyright (c) 2005, 2014, Oracle and/or its affiliates. All rights reserved.
 
   The MySQL Connector/J is licensed under the terms of the GPLv2
   <http://www.gnu.org/licenses/old-licenses/gpl-2.0.html>, like most MySQL Connectors.
@@ -63,14 +63,14 @@ public class ResultSetTest extends BaseTestCase {
 		// build map of charsets supported by server
 		Connection c = getConnectionWithProps("detectCustomCollations=true");
 		Map<String, Integer> charsetsMap = new HashMap<String, Integer>();
-		Iterator<Integer> collationIndexes = ((ConnectionImpl)c).indexToJavaCharset.keySet().iterator();
+		Iterator<Integer> collationIndexes = ((ConnectionImpl)c).indexToMysqlCharset.keySet().iterator();
 		while (collationIndexes.hasNext()) {
 			Integer index = collationIndexes.next();
 			String charsetName = null;
 			if (((ConnectionImpl)c).indexToCustomMysqlCharset != null) {
 				charsetName = ((ConnectionImpl)c).indexToCustomMysqlCharset.get(index);
 			}
-			if (charsetName == null) charsetName = CharsetMapping.STATIC_INDEX_TO_MYSQL_CHARSET_MAP.get(index);
+			if (charsetName == null) charsetName = CharsetMapping.getMysqlCharsetNameForCollationIndex(index);
 			if (charsetName != null) charsetsMap.put(charsetName, index);
 		}
 		c.close();

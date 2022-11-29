@@ -39,7 +39,7 @@ import javax.transaction.xa.XAException;
 import javax.transaction.xa.XAResource;
 import javax.transaction.xa.Xid;
 
-import com.mysql.jdbc.ConnectionImpl;
+import com.mysql.jdbc.Messages;
 import com.mysql.jdbc.StringUtils;
 import com.mysql.jdbc.Util;
 import com.mysql.jdbc.log.Log;
@@ -68,7 +68,7 @@ public class MysqlXAConnection extends MysqlPooledConnection implements
 
 	private static final int MAX_COMMAND_LENGTH = 300;
 	
-	private com.mysql.jdbc.ConnectionImpl underlyingConnection;
+	private com.mysql.jdbc.Connection underlyingConnection;
 
 	private final static Map<Integer, Integer> MYSQL_ERROR_CODES_TO_XA_ERROR_CODES;
 
@@ -98,7 +98,7 @@ public class MysqlXAConnection extends MysqlPooledConnection implements
 				JDBC_4_XA_CONNECTION_WRAPPER_CTOR = Class.forName(
 						"com.mysql.jdbc.jdbc2.optional.JDBC4MysqlXAConnection")
 						.getConstructor(
-								new Class[] { ConnectionImpl.class, Boolean.TYPE });
+								new Class[] { com.mysql.jdbc.Connection.class, Boolean.TYPE });
 			} catch (SecurityException e) {
 				throw new RuntimeException(e);
 			} catch (NoSuchMethodException e) {
@@ -111,7 +111,7 @@ public class MysqlXAConnection extends MysqlPooledConnection implements
 		}
 	}
 
-	protected static MysqlXAConnection getInstance(ConnectionImpl mysqlConnection, 
+	protected static MysqlXAConnection getInstance(com.mysql.jdbc.Connection mysqlConnection, 
 			boolean logXaCommands) throws SQLException {
 		if (!Util.isJdbc4()) {
 			return new MysqlXAConnection(mysqlConnection, logXaCommands);
@@ -126,7 +126,7 @@ public class MysqlXAConnection extends MysqlPooledConnection implements
 	/**
 	 * @param connection
 	 */
-	public MysqlXAConnection(ConnectionImpl connection, boolean logXaCommands)
+	public MysqlXAConnection(com.mysql.jdbc.Connection connection, boolean logXaCommands)
 			throws SQLException {
 		super(connection);
 		this.underlyingConnection = connection;
@@ -281,7 +281,7 @@ public class MysqlXAConnection extends MysqlPooledConnection implements
 		
 		if (!startRscan && !endRscan && flag != TMNOFLAGS) {
 			throw new MysqlXAException(XAException.XAER_INVAL, 
-					"Invalid flag, must use TMNOFLAGS, or any combination of TMSTARTRSCAN and TMENDRSCAN",
+					Messages.getString("MysqlXAConnection.001"),
 					null);
 		}
 
@@ -319,7 +319,7 @@ public class MysqlXAConnection extends MysqlPooledConnection implements
 
 				if (gtridAndBqual.length != (gtridLength + bqualLength)) {
 					throw new MysqlXAException(XAException.XA_RBPROTO,
-							"Error while recovering XIDs from RM. GTRID and BQUAL are wrong sizes", 
+							Messages.getString("MysqlXAConnection.002"), 
 							null);
 				}
 
@@ -596,16 +596,14 @@ public class MysqlXAConnection extends MysqlPooledConnection implements
 	}
 
 	protected static XAException mapXAExceptionFromSQLException(SQLException sqlEx) {
-
-		Integer xaCode = MYSQL_ERROR_CODES_TO_XA_ERROR_CODES
-				.get(Integer.valueOf(sqlEx.getErrorCode()));
+		Integer xaCode = MYSQL_ERROR_CODES_TO_XA_ERROR_CODES.get(Integer.valueOf(sqlEx.getErrorCode()));
 
 		if (xaCode != null) {
-			return new MysqlXAException(xaCode.intValue(), sqlEx.getMessage(), null);
+			return (XAException) new MysqlXAException(xaCode.intValue(), sqlEx.getMessage(), null).initCause(sqlEx);
 		}
 
-		// Punt? We don't know what the error code is here
-		return new MysqlXAException(sqlEx.getMessage(), null);
+		return (XAException) new MysqlXAException(XAException.XAER_RMFAIL, Messages.getString("MysqlXAConnection.003"),
+				null).initCause(sqlEx);
 	}
 
 	private static void appendXid(StringBuilder builder, Xid xid) {

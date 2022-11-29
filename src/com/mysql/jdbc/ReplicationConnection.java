@@ -934,8 +934,15 @@ public class ReplicationConnection implements Connection, PingTarget {
 		return getCurrentConnection().getLog();
 	}
 
+	/**
+	 * @deprecated replaced by <code>getServerCharset()</code>
+	 */
 	public String getServerCharacterEncoding() {
-		return getCurrentConnection().getServerCharacterEncoding();
+		return getServerCharset();
+	}
+
+	public String getServerCharset() {
+		return getCurrentConnection().getServerCharset();
 	}
 
 	public TimeZone getServerTimezoneTZ() {
@@ -3019,5 +3026,13 @@ public class ReplicationConnection implements Connection, PingTarget {
 
 	public void setAllowPublicKeyRetrieval(boolean allowPublicKeyRetrieval) throws SQLException {
 		getCurrentConnection().setAllowPublicKeyRetrieval(allowPublicKeyRetrieval);
+	}
+
+	public void setDontCheckOnDuplicateKeyUpdateInSQL(boolean dontCheckOnDuplicateKeyUpdateInSQL) {
+		getCurrentConnection().setDontCheckOnDuplicateKeyUpdateInSQL(dontCheckOnDuplicateKeyUpdateInSQL);
+	}
+
+	public boolean getDontCheckOnDuplicateKeyUpdateInSQL() {
+		return getCurrentConnection().getDontCheckOnDuplicateKeyUpdateInSQL();
 	}
 }

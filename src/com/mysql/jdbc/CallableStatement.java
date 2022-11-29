@@ -583,8 +583,8 @@ public class CallableStatement extends PreparedStatement implements
 					int parenOpenPos = this.originalSql.indexOf('(', startPos + 4);
 					
 					if (parenOpenPos != -1) {
-						int parenClosePos = StringUtils.indexOfIgnoreCaseRespectQuotes(parenOpenPos, 
-								this.originalSql, ")", '\'', true);
+						int parenClosePos = StringUtils.indexOfIgnoreCase(parenOpenPos, 
+								this.originalSql, ")", "'", "'", StringUtils.SEARCH_MODE__ALL);
 						
 						if (parenClosePos != -1) {
 							List<?> parsedParameters = StringUtils.split(this.originalSql.substring(parenOpenPos + 1, parenClosePos), ",", "'\"", "'\"", true);
@@ -2439,7 +2439,7 @@ public class CallableStatement extends PreparedStatement implements
 								StringUtils.getBytes(outParameterName,
 										this.charConverter, this.charEncoding,
 										this.connection
-												.getServerCharacterEncoding(),
+												.getServerCharset(),
 										this.connection.parserKnowsUnicode(), getExceptionInterceptor()));
 					}
 				}

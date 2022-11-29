@@ -47,6 +47,7 @@ import java.util.Properties;
 import junit.framework.ComparisonFailure;
 import testsuite.BaseTestCase;
 
+import com.mysql.jdbc.CharsetMapping;
 import com.mysql.jdbc.ConnectionProperties;
 import com.mysql.jdbc.Driver;
 import com.mysql.jdbc.NonRegisteringDriver;
@@ -1536,10 +1537,9 @@ public class MetaDataRegressionTest extends BaseTestCase {
 			throws SQLException {
 
 		int i = ((com.mysql.jdbc.ConnectionImpl) this.conn)
-				.getMaxBytesPerChar(((com.mysql.jdbc.ConnectionImpl) this.conn)
-						.getJavaEncodingForMysqlEncoding(
+				.getMaxBytesPerChar(CharsetMapping.getJavaEncodingForMysqlCharset(
 								((com.mysql.jdbc.Connection) this.conn)
-										.getServerCharacterEncoding()));
+										.getServerCharset()));
 		if (i == 1) {
 			// This is INT field but still processed in
 			// ResultsetMetaData.getColumnDisplaySize
@@ -1963,10 +1963,9 @@ public class MetaDataRegressionTest extends BaseTestCase {
 					if ("CHAR_OCTET_LENGTH".equals(metadataExpected
 							.getColumnName(i + 1))) {
 						if (((com.mysql.jdbc.ConnectionImpl) this.conn)
-								.getMaxBytesPerChar(((com.mysql.jdbc.ConnectionImpl) this.conn)
-										.getJavaEncodingForMysqlEncoding(
+								.getMaxBytesPerChar(CharsetMapping.getJavaEncodingForMysqlCharset(
 												((com.mysql.jdbc.Connection) this.conn)
-														.getServerCharacterEncoding())) > 1) {
+														.getServerCharset())) > 1) {
 							continue; // SHOW CREATE and CHAR_OCT *will* differ
 						}
 					}
@@ -4010,6 +4009,11 @@ public class MetaDataRegressionTest extends BaseTestCase {
 	 *             if the test fails.
 	 */
 	public void testBug17248345() throws Exception {
+		if (Util.isJdbc4()) {
+			// there is a specific JCDB4 test for this
+			return;
+		}
+		
 		Connection testConn;
 
 		// create one stored procedure and one function with same name
@@ -4269,6 +4273,10 @@ public class MetaDataRegressionTest extends BaseTestCase {
 	 * @throws Exception if the test fails.
 	 */
 	public void testReservedWords() throws Exception {
+		if (Util.isJdbc4()) {
+			// there is a specific JCDB4 test for this
+			return;
+		}
 		final String mysqlKeywords = "ACCESSIBLE,ANALYZE,ASENSITIVE,BEFORE,BIGINT,BINARY,BLOB,CALL,CHANGE,CONDITION,DATABASE,DATABASES,DAY_HOUR,DAY_MICROSECOND,DAY_MINUTE,DAY_SECOND,DELAYED,DETERMINISTIC,DISTINCTROW,DIV,DUAL,EACH,ELSEIF,ENCLOSED,ESCAPED,EXIT,EXPLAIN,FLOAT4,FLOAT8,FORCE,FULLTEXT,HIGH_PRIORITY,HOUR_MICROSECOND,HOUR_MINUTE,HOUR_SECOND,IF,IGNORE,INDEX,INFILE,INOUT,INT1,INT2,INT3,INT4,INT8,IO_AFTER_GTIDS,IO_BEFORE_GTIDS,ITERATE,KEYS,KILL,LEAVE,LIMIT,LINEAR,LINES,LOAD,LOCALTIME,LOCALTIMESTAMP,LOCK,LONG,LONGBLOB,LONGTEXT,LOOP,LOW_PRIORITY,MASTER_BIND,MASTER_SSL_VERIFY_SERVER_CERT,MAXVALUE,MEDIUMBLOB,MEDIUMINT,MEDIUMTEXT,MIDDLEINT,MINUTE_MICROSECOND,MINUTE_SECOND,MOD,MODIFIES,NONBLOCKING,NO_WRITE_TO_BINLOG,OPTIMIZE,OPTIONALLY,OUT,OUTFILE,PARTITION,PURGE,RANGE,READS,READ_WRITE,REGEXP,RELEASE,RENAME,REPEAT,REPLACE,REQUIRE,RESIGNAL,RETURN,RLIKE,SCHEMAS,SECOND_MICROSECOND,SENSITIVE,SEPARATOR,SHOW,SIGNAL,SPATIAL,SPECIFIC,SQLEXCEPTION,SQLWARNING,SQL_BIG_RESULT,SQL_CALC_FOUND_ROWS,SQL_SMALL_RESULT,SSL,STARTING,STRAIGHT_JOIN,TERMINATED,TINYBLOB,TINYINT,TINYTEXT,TRIGGER,UNDO,UNLOCK,UNSIGNED,USE,UTC_DATE,UTC_TIME,UTC_TIMESTAMP,VARBINARY,VARCHARACTER,WHILE,XOR,YEAR_MONTH,ZEROFILL";
 		assertEquals("MySQL keywords don't match expected.", mysqlKeywords, this.conn.getMetaData().getSQLKeywords());
 	}

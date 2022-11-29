@@ -370,12 +370,12 @@ public class ServerPreparedStatement extends PreparedStatement {
 
 		checkNullOrEmptyQuery(sql);
 
-		this.hasOnDuplicateKeyUpdate = containsOnDuplicateKeyInString(sql);
-		
 		int startOfStatement = findStartOfStatement(sql);
 		
 		this.firstCharOfStmt = StringUtils.firstAlphaCharUc(sql, startOfStatement);
-		
+
+		this.hasOnDuplicateKeyUpdate = this.firstCharOfStmt == 'I' && containsOnDuplicateKeyInString(sql);
+
 		if (this.connection.versionMeetsMinimum(5, 0, 0)) {
 			this.serverNeedsResetBeforeEachExecution = 
 				!this.connection.versionMeetsMinimum(5, 0, 3);
@@ -2423,7 +2423,7 @@ public class ServerPreparedStatement extends PreparedStatement {
 						packet.writeLenBytes((byte[]) value);
 					} else if (!this.isLoadDataQuery) {
 						packet.writeLenString((String) value, this.charEncoding,
-								this.connection.getServerCharacterEncoding(),
+								this.connection.getServerCharset(),
 								this.charConverter, this.connection
 										.parserKnowsUnicode(),
 										this.connection);
@@ -2654,7 +2654,7 @@ public class ServerPreparedStatement extends PreparedStatement {
 				
 					byte[] valueAsBytes = StringUtils.getBytes(buf, null,
 							clobEncoding, this.connection
-									.getServerCharacterEncoding(), 0, numRead,
+									.getServerCharset(), 0, numRead,
 							this.connection.parserKnowsUnicode(), getExceptionInterceptor());
 	
 					packet.writeBytesNoNull(valueAsBytes, 0, valueAsBytes.length);

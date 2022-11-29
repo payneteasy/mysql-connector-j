@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2002, 2013, Oracle and/or its affiliates. All rights reserved.
+  Copyright (c) 2002, 2014, Oracle and/or its affiliates. All rights reserved.
 
   The MySQL Connector/J is licensed under the terms of the GPLv2
   <http://www.gnu.org/licenses/old-licenses/gpl-2.0.html>, like most MySQL Connectors.
@@ -72,7 +72,7 @@ public class JDBC4ResultSet extends ResultSetImpl {
 	public Reader getNCharacterStream(int columnIndex) throws SQLException {
 		checkColumnBounds(columnIndex);
 		
-		String fieldEncoding = this.fields[columnIndex - 1].getCharacterSet();
+		String fieldEncoding = this.fields[columnIndex - 1].getEncoding();
 		if (fieldEncoding == null || !fieldEncoding.equals("UTF-8")) {
 			throw new SQLException(
 					"Can not call getNCharacterStream() when field's charset isn't UTF-8");
@@ -113,7 +113,7 @@ public class JDBC4ResultSet extends ResultSetImpl {
 	public NClob getNClob(int columnIndex) throws SQLException {
 		checkColumnBounds(columnIndex);
 		
-		String fieldEncoding = this.fields[columnIndex - 1].getCharacterSet();
+		String fieldEncoding = this.fields[columnIndex - 1].getEncoding();
 		if (fieldEncoding == null || !fieldEncoding.equals("UTF-8")) {
 			throw new SQLException(
 					"Can not call getNClob() when field's charset isn't UTF-8");
@@ -214,7 +214,7 @@ public class JDBC4ResultSet extends ResultSetImpl {
 	public String getNString(int columnIndex) throws SQLException {
 		checkColumnBounds(columnIndex);
 		
-		String fieldEncoding = this.fields[columnIndex - 1].getCharacterSet();
+		String fieldEncoding = this.fields[columnIndex - 1].getEncoding();
 		if (fieldEncoding == null || !fieldEncoding.equals("UTF-8")) {
 			throw new SQLException(
 					"Can not call getNString() when field's charset isn't UTF-8");

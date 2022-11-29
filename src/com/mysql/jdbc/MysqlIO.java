@@ -76,7 +76,6 @@ import com.mysql.jdbc.util.ResultSetUtil;
  * @see java.sql.Connection
  */
 public class MysqlIO {
-    private static final int UTF8_CHARSET_INDEX = 33;
     private static final String CODE_PAGE_1252 = "Cp1252";
 	 protected static final int NULL_LENGTH = ~0;
     protected static final int COMP_HEADER_LENGTH = 3;
@@ -946,20 +945,20 @@ public class MysqlIO {
         }
     }
 
-    protected void clearInputStream() throws SQLException {
-
-        try {
-            int len = this.mysqlInput.available();
-
-            while (len > 0) {
-                this.mysqlInput.skip(len);
-                len = this.mysqlInput.available();
-            }
-        } catch (IOException ioEx) {
-            throw SQLError.createCommunicationsException(this.connection,
-                this.lastPacketSentTimeMs, this.lastPacketReceivedTimeMs, ioEx, getExceptionInterceptor());
-        }
-    }
+	protected void clearInputStream() throws SQLException {
+		try {
+			int len;
+			
+			// Due to a bug in some older Linux kernels (fixed after the patch "tcp: fix FIONREAD/SIOCINQ"), our SocketInputStream.available() may return 1 even
+			// if there is no data in the Stream, so, we need to check if InputStream.skip() actually skipped anything.
+			while ((len = this.mysqlInput.available()) > 0 && this.mysqlInput.skip(len) > 0) {
+				continue;
+			}
+		} catch (IOException ioEx) {
+			throw SQLError.createCommunicationsException(this.connection, this.lastPacketSentTimeMs,
+					this.lastPacketReceivedTimeMs, ioEx, getExceptionInterceptor());
+		}
+	}
 
     protected void resetReadPacketSequence() {
         this.readPacketSequence = 0;
@@ -1796,20 +1795,9 @@ public class MysqlIO {
 			// send response
 			if (toServer.size() > 0) {
 				if (challenge == null) {
-					// write COM_CHANGE_USER Packet
+					String enc = getEncodingForHandshake();
 
-					String enc = this.connection.getEncoding();
-					int charsetIndex = 0;
-					if (enc != null) {
-						charsetIndex = CharsetMapping.getCharsetIndexForMysqlEncodingName(CharsetMapping.getMysqlEncodingForJavaEncoding(enc, this.connection));
-					} else {
-						enc = "utf-8";
-					}
-					if (charsetIndex == 0) {
-						charsetIndex = UTF8_CHARSET_INDEX;
-					}
-					
-					
+					// write COM_CHANGE_USER Packet
 					last_sent = new Buffer(packLength + 1);
 					last_sent.writeByte((byte) MysqlDefs.COM_CHANGE_USER);
 					
@@ -1826,13 +1814,9 @@ public class MysqlIO {
 						last_sent.writeByte((byte) 0);
 					}
 
-					// charset (2 bytes low-endian)
-					last_sent.writeByte((byte) (charsetIndex % 256));
-					if (charsetIndex > 255) {
-						last_sent.writeByte((byte) (charsetIndex / 256));
-					} else {
-						last_sent.writeByte((byte) 0);
-					}
+					appendCharsetByteForHandshake(last_sent, enc);
+					// two (little-endian) bytes for charset in this packet
+					last_sent.writeByte((byte) 0);
 
 					// plugin name
 					if ((this.serverCapabilities & CLIENT_PLUGIN_AUTH) != 0) {
@@ -1871,20 +1855,18 @@ public class MysqlIO {
 
 				} else {
 					// write Auth Response Packet
+					String enc = getEncodingForHandshake();
 
 					last_sent = new Buffer(packLength);
 					last_sent.writeLong(this.clientParam);
 					last_sent.writeLong(this.maxThreeBytes);
 
-					// charset, JDBC will connect as 'utf8',
-					// and use 'SET NAMES' to change to the desired
-					// charset after the connection is established.
-					last_sent.writeByte((byte) UTF8_CHARSET_INDEX);
+					appendCharsetByteForHandshake(last_sent, enc);
 
 					last_sent.writeBytesNoNull(new byte[23]);	// Set of bytes reserved for future use.
 
 					// User/Password data
-					last_sent.writeString(user, "utf-8", this.connection);
+					last_sent.writeString(user, enc, this.connection);
 
 					if ((this.serverCapabilities & CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA) != 0 ) {
 						// send lenenc-int length of auth-response and string[n] auth-response
@@ -1896,19 +1878,19 @@ public class MysqlIO {
 					}
 
 					if (this.useConnectWithDb) {
-						last_sent.writeString(database, "utf-8", this.connection);
+						last_sent.writeString(database, enc, this.connection);
 					} else {
 						/* For empty database*/
 						last_sent.writeByte((byte) 0);
 					}
 
 					if ((this.serverCapabilities & CLIENT_PLUGIN_AUTH) != 0) {
-						last_sent.writeString(plugin.getProtocolPluginName(), "utf-8", this.connection);
+						last_sent.writeString(plugin.getProtocolPluginName(), enc, this.connection);
 					}
 					
 					// connection attributes
 					if (((this.clientParam & CLIENT_CONNECT_ATTRS) != 0) ) {
-						sendConnectionAttributes(last_sent, "utf-8", this.connection);
+						sendConnectionAttributes(last_sent, enc, this.connection);
 					}
 					
 					send(last_sent, last_sent.getPosition());
@@ -1982,8 +1964,8 @@ public class MysqlIO {
 			Properties props = getConnectionAttributesAsProperties(atts);
 			
 			for(Object key : props.keySet()) {
-				lb.writeLenString((String) key, enc, conn.getServerCharacterEncoding(), null, conn.parserKnowsUnicode(), conn);
-				lb.writeLenString(props.getProperty((String) key), enc, conn.getServerCharacterEncoding(), null, conn.parserKnowsUnicode(), conn);				
+				lb.writeLenString((String) key, enc, conn.getServerCharset(), null, conn.parserKnowsUnicode(), conn);
+				lb.writeLenString(props.getProperty((String) key), enc, conn.getServerCharset(), null, conn.parserKnowsUnicode(), conn);				
 			}
 
 		} catch (UnsupportedEncodingException e){
@@ -2581,7 +2563,7 @@ public class MysqlIO {
                         } else {
                             this.sendPacket.writeStringNoNull(extraData,
                                 extraDataCharEncoding,
-                                this.connection.getServerCharacterEncoding(),
+                                this.connection.getServerCharset(),
                                 this.connection.parserKnowsUnicode(), this.connection);
                         }
                     } else if (command == MysqlDefs.PROCESS_KILL) {
@@ -2694,7 +2676,7 @@ public class MysqlIO {
 	    		if (statementComment != null) {
 	    			commentAsBytes = StringUtils.getBytes(statementComment, null,
 	    					characterEncoding, this.connection
-	    					.getServerCharacterEncoding(),
+	    					.getServerCharset(),
 	    					this.connection.parserKnowsUnicode(), getExceptionInterceptor());
 
 	    			packLength += commentAsBytes.length;
@@ -2718,7 +2700,7 @@ public class MysqlIO {
 	    		if (characterEncoding != null) {
 	    			if (this.platformDbCharsetMatches) {
 	    				this.sendPacket.writeStringNoNull(query, characterEncoding,
-	    						this.connection.getServerCharacterEncoding(),
+	    						this.connection.getServerCharset(),
 	    						this.connection.parserKnowsUnicode(),
 	    						this.connection);
 	    			} else {
@@ -2727,7 +2709,7 @@ public class MysqlIO {
 	    				} else {
 	    					this.sendPacket.writeStringNoNull(query,
 	    							characterEncoding,
-	    							this.connection.getServerCharacterEncoding(),
+	    							this.connection.getServerCharset(),
 	    							this.connection.parserKnowsUnicode(),
 	    							this.connection);
 	    				}
@@ -4627,6 +4609,7 @@ public class MysqlIO {
     void secureAuth411(Buffer packet, int packLength, String user,
         String password, String database, boolean writeClientParams)
         throws SQLException {
+		String enc = getEncodingForHandshake();
         //	SERVER:  public_seed=create_random_string()
         //			 send(public_seed)
         //
@@ -4655,10 +4638,7 @@ public class MysqlIO {
                     packet.writeLong(this.clientParam);
                     packet.writeLong(this.maxThreeBytes);
 
-                    // charset, JDBC will connect as 'utf8',
-                    // and use 'SET NAMES' to change to the desired
-                    // charset after the connection is established.
-                    packet.writeByte((byte) UTF8_CHARSET_INDEX);
+					appendCharsetByteForHandshake(packet, enc);
 
                     // Set of bytes reserved for future use.
                     packet.writeBytesNoNull(new byte[23]);
@@ -4673,7 +4653,7 @@ public class MysqlIO {
         }
 
         // User/Password data
-        packet.writeString(user, "utf-8", this.connection);
+        packet.writeString(user, enc, this.connection);
 
         if (password.length() != 0) {
             packet.writeByte((byte) 0x14);
@@ -4696,27 +4676,15 @@ public class MysqlIO {
         }
 
         if (this.useConnectWithDb) {
-            packet.writeString(database, "utf-8", this.connection);
+            packet.writeString(database, enc, this.connection);
         } else {
             /* For empty database*/
             packet.writeByte((byte) 0);
         }
                     
-        if ((this.serverCapabilities & CLIENT_PROTOCOL_41) != 0) {
-			// charset (2 bytes low-endian)
-			String mysqlEncodingName = this.connection.getServerCharacterEncoding();
-			if ("ucs2".equalsIgnoreCase(mysqlEncodingName) ||
-					"utf16".equalsIgnoreCase(mysqlEncodingName) ||
-					"utf16le".equalsIgnoreCase(mysqlEncodingName) ||
-					"uft32".equalsIgnoreCase(mysqlEncodingName)) {
-				packet.writeByte((byte) UTF8_CHARSET_INDEX);
-				packet.writeByte((byte) 0);
-			}
-        }
-        
 		// connection attributes
 		if ((this.serverCapabilities & CLIENT_CONNECT_ATTRS) != 0) {
-			sendConnectionAttributes(packet, "utf-8", this.connection);
+			sendConnectionAttributes(packet, enc, this.connection);
 		}
 
         send(packet, packet.getPosition());
@@ -5257,11 +5225,7 @@ public class MysqlIO {
         if (this.use41Extensions) {
             packet.writeLong(this.clientParam);
             packet.writeLong(this.maxThreeBytes);
-			int charsetIndex = 0;
-			if (this.connection.getEncoding() != null) {
-				charsetIndex = CharsetMapping.getCharsetIndexForMysqlEncodingName(CharsetMapping.getMysqlEncodingForJavaEncoding(this.connection.getEncoding(), this.connection));
-			}
-            packet.writeByte(charsetIndex == 0 ? (byte) UTF8_CHARSET_INDEX : (byte) charsetIndex);
+			appendCharsetByteForHandshake(packet, getEncodingForHandshake());
             packet.writeBytesNoNull(new byte[23]);	// Set of bytes reserved for future use.
         } else {
             packet.writeInt((int) this.clientParam);
@@ -5363,5 +5327,46 @@ public class MysqlIO {
 			this.deflater.end();
 			this.deflater = null;
 		}
+	}
+
+	/**
+	 * Get the Java encoding to be used for the handshake
+	 * response. Defaults to UTF-8.
+	 */
+	private String getEncodingForHandshake() {
+		String enc = this.connection.getEncoding();
+		if (enc == null) {
+			enc = "UTF-8";
+		}
+		return enc;
+	}
+
+	/**
+	 * Append the MySQL collation index to the handshake packet. A
+	 * single byte will be added to the packet corresponding to the
+	 * collation index found for the requested Java encoding name.
+	 *
+	 * If the index is &gt; 255 which may be valid at some point in
+	 * the future, an exception will be thrown. At the time of this
+	 * implementation the index cannot be &gt; 255 and only the
+	 * COM_CHANGE_USER rpc, not the handshake response, can handle a
+	 * value &gt; 255.
+	 *
+	 * @param packet to append to
+	 * @param end The Java encoding name used to lookup the collation index
+	 */
+	private void appendCharsetByteForHandshake(Buffer packet, String enc) throws SQLException {
+		int charsetIndex = 0;
+		if (enc != null) {
+			charsetIndex = CharsetMapping.getCollationIndexForJavaEncoding(enc, this.connection);
+		}
+		if (charsetIndex == 0) {
+			charsetIndex = CharsetMapping.MYSQL_COLLATION_INDEX_utf8;
+		}
+		if (charsetIndex > 255) {
+            throw SQLError.createSQLException("Invalid character set index for encoding: " + enc,
+                SQLError.SQL_STATE_ILLEGAL_ARGUMENT, getExceptionInterceptor());
+		}
+		packet.writeByte((byte) charsetIndex);
 	}
 }

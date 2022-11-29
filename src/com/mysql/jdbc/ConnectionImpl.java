@@ -262,23 +262,25 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements
 
 	protected static Map<?, ?> roundRobinStatsMap;
 
-	private static final Map<String, Map<Long, String>> serverCollationByUrl = new HashMap<String, Map<Long,String>>();
+	/**
+	 * Actual collation index to collation name map for given server URLs.
+	 */
+	private static final Map<String, Map<Long, String>> dynamicIndexToCollationMapByUrl = new HashMap<String, Map<Long,String>>();
 
 	/**
-	 * Map for Java charsets of user defined charsets. We can't map them statically, because
-	 * they can be different for different server URLs.
+	 * Actual collation index to mysql charset name map for given server URLs.
 	 */
-	private static final Map<String, Map<Integer, String>> serverJavaCharsetByUrl = new HashMap<String, Map<Integer,String>>();
+	private static final Map<String, Map<Integer, String>> dynamicIndexToCharsetMapByUrl = new HashMap<String, Map<Integer,String>>();
+
 	/**
-	 * Map for user defined charsets. We can't map them statically, because
-	 * they can be different for different server URLs.
+	 * Actual collation index to mysql charset name map of user defined charsets for given server URLs.
 	 */
-	private static final Map<String, Map<Integer, String>> serverCustomCharsetByUrl = new HashMap<String, Map<Integer,String>>();
+	private static final Map<String, Map<Integer, String>> customIndexToCharsetMapByUrl = new HashMap<String, Map<Integer,String>>();
+
 	/**
-	 * Map for user defined charsets. We can't map them statically, because
-	 * they can be different for different server URLs.
+	 * Actual mysql charset name to mblen map of user defined charsets for given server URLs.
 	 */
-	private static final Map<String, Map<String, Integer>> serverCustomMblenByUrl = new HashMap<String, Map<String, Integer>>();
+	private static final Map<String, Map<String, Integer>> customCharsetToMblenMapByUrl = new HashMap<String, Map<String, Integer>>();
 	
 	private CacheAdapter<String, Map<String, String>> serverConfigCache;
 
@@ -512,7 +514,7 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements
 	 * We need this 'bootstrapped', because 4.1 and newer will send fields back
 	 * with this even before we fill this dynamically from the server.
 	 */
-	public Map<Integer, String> indexToJavaCharset = new HashMap<Integer, String>();
+	public Map<Integer, String> indexToMysqlCharset = new HashMap<Integer, String>();
 
 	public Map<Integer, String> indexToCustomMysqlCharset = null; //new HashMap<Integer, String>();
 
@@ -969,22 +971,22 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements
 	 */
 	private void buildCollationMapping() throws SQLException {
 
-		Map<Integer, String> javaCharset = null;
+		Map<Integer, String> indexToCharset = null;
 		Map<Long, String> sortedCollationMap = null;
 		Map<Integer, String> customCharset = null;
 		Map<String, Integer> customMblen = null;
 
 		if (getCacheServerConfiguration()) {
-			synchronized (serverJavaCharsetByUrl) {
-				javaCharset = serverJavaCharsetByUrl.get(getURL());
-				sortedCollationMap = serverCollationByUrl.get(getURL());
-				customCharset = serverCustomCharsetByUrl.get(getURL());
-				customMblen = serverCustomMblenByUrl.get(getURL());
+			synchronized (dynamicIndexToCharsetMapByUrl) {
+				indexToCharset = dynamicIndexToCharsetMapByUrl.get(getURL());
+				sortedCollationMap = dynamicIndexToCollationMapByUrl.get(getURL());
+				customCharset = customIndexToCharsetMapByUrl.get(getURL());
+				customMblen = customCharsetToMblenMapByUrl.get(getURL());
 			}
 		}
 		
-		if (javaCharset == null) {
-			javaCharset = new HashMap<Integer, String>();
+		if (indexToCharset == null) {
+			indexToCharset = new HashMap<Integer, String>();
 
 		if (versionMeetsMinimum(4, 1, 0) && getDetectCustomCollations()) {
 
@@ -1019,19 +1021,18 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements
 						int collationIndex = indexEntry.getKey().intValue();
 						String charsetName = indexEntry.getValue();
 
-						javaCharset.put(collationIndex, getJavaEncodingForMysqlEncoding(charsetName));
+						indexToCharset.put(collationIndex, charsetName);
 
 						// if no static map for charsetIndex
 						// or server has a different mapping then our static map,
 						// adding it to custom map 
 						if (collationIndex >= CharsetMapping.MAP_SIZE ||
-							!charsetName.equals(CharsetMapping.STATIC_INDEX_TO_MYSQL_CHARSET_MAP.get(collationIndex))) {
+							!charsetName.equals(CharsetMapping.getMysqlCharsetNameForCollationIndex(collationIndex))) {
 							customCharset.put(collationIndex, charsetName);
 						}
 
 						// if no static map for charsetName adding to custom map
-						if (!CharsetMapping.STATIC_CHARSET_TO_NUM_BYTES_MAP.containsKey(charsetName) &&
-							!CharsetMapping.STATIC_4_0_CHARSET_TO_NUM_BYTES_MAP.containsKey(charsetName)) {
+						if (!CharsetMapping.CHARSET_NAME_TO_CHARSET.containsKey(charsetName)) {
 							customMblen.put(charsetName, null);
 						}
 					}
@@ -1054,11 +1055,11 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements
 					}
 
 					if (getCacheServerConfiguration()) {
-						synchronized (serverJavaCharsetByUrl) {
-							serverJavaCharsetByUrl.put(getURL(), javaCharset);
-							serverCollationByUrl.put(getURL(), sortedCollationMap);
-							serverCustomCharsetByUrl.put(getURL(), customCharset);
-							serverCustomMblenByUrl.put(getURL(), customMblen);
+						synchronized (dynamicIndexToCharsetMapByUrl) {
+							dynamicIndexToCharsetMapByUrl.put(getURL(), indexToCharset);
+							dynamicIndexToCollationMapByUrl.put(getURL(), sortedCollationMap);
+							customIndexToCharsetMapByUrl.put(getURL(), customCharset);
+							customCharsetToMblenMapByUrl.put(getURL(), customMblen);
 						}
 					}
 
@@ -1087,12 +1088,12 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements
 				}
 			}
 		} else {
-			for (int i = 0; i < CharsetMapping.INDEX_TO_CHARSET.length; i++) {
-				javaCharset.put(i, getJavaEncodingForMysqlEncoding(CharsetMapping.STATIC_INDEX_TO_MYSQL_CHARSET_MAP.get(i)));
+			for (int i = 1; i < CharsetMapping.MAP_SIZE; i++) {
+				indexToCharset.put(i, CharsetMapping.getMysqlCharsetNameForCollationIndex(i));
 			}
 			if (getCacheServerConfiguration()) {
-				synchronized (serverJavaCharsetByUrl) {
-					serverJavaCharsetByUrl.put(getURL(), javaCharset);
+				synchronized (dynamicIndexToCharsetMapByUrl) {
+					dynamicIndexToCharsetMapByUrl.put(getURL(), indexToCharset);
 				}
 			}
 		}
@@ -1100,22 +1101,13 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements
 		
 		}
 
-		this.indexToJavaCharset = Collections.unmodifiableMap(javaCharset);
+		this.indexToMysqlCharset = Collections.unmodifiableMap(indexToCharset);
 		if (customCharset != null) {
 			this.indexToCustomMysqlCharset = Collections.unmodifiableMap(customCharset);
 		}
 		if (customMblen != null) {
 			this.mysqlCharsetToCustomMblen = Collections.unmodifiableMap(customMblen);
 		}
-	}
-
-	public String getJavaEncodingForMysqlEncoding(String mysqlEncoding) throws SQLException {
-		
-		if (versionMeetsMinimum(4, 1, 0) && "latin1".equalsIgnoreCase(mysqlEncoding)) {
-			return "Cp1252";
-		}
-		
-		return CharsetMapping.MYSQL_TO_JAVA_CHARSET_MAP.get(mysqlEncoding);
 	}
 
 	private boolean canHandleAsServerPreparedStatement(String sql) 
@@ -1182,13 +1174,12 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements
 			int statementLength = sql.length();
 			int lastPosToLook = statementLength - 7; // "LIMIT ".length()
 			boolean allowBackslashEscapes = !this.noBackslashEscapes;
-			char quoteChar = this.useAnsiQuotes ? '"' : '\'';
+			String quoteChar = this.useAnsiQuotes ? "\"" : "'";
 			boolean foundLimitWithPlaceholder = false;
 
 			while (currentPos < lastPosToLook) {
-				int limitStart = StringUtils.indexOfIgnoreCaseRespectQuotes(
-						currentPos, sql, "LIMIT ", quoteChar,
-						allowBackslashEscapes);
+				int limitStart = StringUtils.indexOfIgnoreCase(currentPos, sql, "LIMIT ", quoteChar, quoteChar,
+						allowBackslashEscapes ? StringUtils.SEARCH_MODE__ALL : StringUtils.SEARCH_MODE__MRK_COM_WS);
 
 				if (limitStart == -1) {
 					break;
@@ -1345,21 +1336,18 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements
 			return;
 		}
 
-		String serverEncoding = this.serverVariables.get("character_set");
+		String serverCharset = this.serverVariables.get("character_set");
 
-		if (serverEncoding == null) {
+		if (serverCharset == null) {
 			// must be 4.1.1 or newer?
-			serverEncoding = this.serverVariables.get("character_set_server");
+			serverCharset = this.serverVariables.get("character_set_server");
 		}
 
 		String mappedServerEncoding = null;
 
-		if (serverEncoding != null) {
+		if (serverCharset != null) {
 			try {
-				mappedServerEncoding = getJavaEncodingForMysqlEncoding(serverEncoding
-							.toUpperCase(Locale.ENGLISH));
-			} catch (SQLException ex) {
-				throw ex;
+				mappedServerEncoding = CharsetMapping.getJavaEncodingForMysqlCharset(serverCharset);
 			} catch (RuntimeException ex) {
 				SQLException sqlEx = SQLError.createSQLException(ex.toString(), SQLError.SQL_STATE_ILLEGAL_ARGUMENT, null);
 				sqlEx.initCause(ex);
@@ -1385,20 +1373,20 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements
 		// Now, try and find a Java I/O converter that can do
 		// the encoding for us
 		//
-		if (serverEncoding != null) {
+		if (serverCharset != null) {
 			if (mappedServerEncoding == null) {
 				// We don't have a mapping for it, so try
 				// and canonicalize the name....
-				if (Character.isLowerCase(serverEncoding.charAt(0))) {
-					char[] ach = serverEncoding.toCharArray();
-					ach[0] = Character.toUpperCase(serverEncoding.charAt(0));
+				if (Character.isLowerCase(serverCharset.charAt(0))) {
+					char[] ach = serverCharset.toCharArray();
+					ach[0] = Character.toUpperCase(serverCharset.charAt(0));
 					setEncoding(new String(ach));
 				}
 			}
 
 			if (mappedServerEncoding == null) {
 				throw SQLError.createSQLException("Unknown character encoding on server '"
-						+ serverEncoding
+						+ serverCharset
 						+ "', use 'characterEncoding=' property "
 						+ " to provide correct mapping",
 						SQLError.SQL_STATE_INVALID_CONNECTION_ATTRIBUTE, getExceptionInterceptor());
@@ -1792,9 +1780,7 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements
 				String oldEncoding = getEncoding();
 
 				try {
-					setEncoding(getJavaEncodingForMysqlEncoding(oldEncoding));
-				} catch (SQLException ex) {
-					throw ex;
+					setEncoding(CharsetMapping.getJavaEncodingForMysqlCharset(oldEncoding));
 				} catch (RuntimeException ex) {
 					SQLException sqlEx = SQLError.createSQLException(ex.toString(), SQLError.SQL_STATE_ILLEGAL_ARGUMENT, null);
 					sqlEx.initCause(ex);
@@ -1859,7 +1845,7 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements
 		            }
 		            
 					String serverEncodingToSet = 
-						CharsetMapping.INDEX_TO_CHARSET[this.io.serverCharsetIndex];
+						CharsetMapping.getJavaEncodingForCollationIndex(this.io.serverCharsetIndex);
 					
 					if (serverEncodingToSet == null || serverEncodingToSet.length() == 0) {
 						if (realJavaEncoding != null) {
@@ -1952,8 +1938,8 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements
 
 							setEncoding(realJavaEncoding);
 						} /* not utf-8 */else {
-							String mysqlEncodingName = CharsetMapping
-									.getMysqlEncodingForJavaEncoding(
+							String mysqlCharsetName = CharsetMapping
+									.getMysqlCharsetForJavaEncoding(
 											realJavaEncoding
 													.toUpperCase(Locale.ENGLISH),
 											this);
@@ -1967,10 +1953,10 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements
 							 * "euckr"; }
 							 */
 
-							if (mysqlEncodingName != null) {
+							if (mysqlCharsetName != null) {
 								
-								if (dontCheckServerMatch || !characterSetNamesMatches(mysqlEncodingName)) {
-									execSQL(null, "SET NAMES " + mysqlEncodingName,
+								if (dontCheckServerMatch || !characterSetNamesMatches(mysqlCharsetName)) {
+									execSQL(null, "SET NAMES " + mysqlCharsetName,
 										-1, null,
 										DEFAULT_RESULT_SET_TYPE,
 										DEFAULT_RESULT_SET_CONCURRENCY,
@@ -1987,27 +1973,27 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements
 						// Tell the server we'll use the server default charset
 						// to send our
 						// queries from now on....
-						String mysqlEncodingName = getServerCharacterEncoding();
+						String mysqlCharsetName = getServerCharset();
 						
 						if(getUseOldUTF8Behavior()){
-							mysqlEncodingName = "latin1";
+							mysqlCharsetName = "latin1";
 						}
 
 						boolean ucs2 = false;
-						if (	"ucs2".equalsIgnoreCase(mysqlEncodingName) ||
-								"utf16".equalsIgnoreCase(mysqlEncodingName) ||
-								"utf16le".equalsIgnoreCase(mysqlEncodingName) ||
-								"utf32".equalsIgnoreCase(mysqlEncodingName)) {
-							mysqlEncodingName = "utf8";
+						if (	"ucs2".equalsIgnoreCase(mysqlCharsetName) ||
+								"utf16".equalsIgnoreCase(mysqlCharsetName) ||
+								"utf16le".equalsIgnoreCase(mysqlCharsetName) ||
+								"utf32".equalsIgnoreCase(mysqlCharsetName)) {
+							mysqlCharsetName = "utf8";
 							ucs2 = true;
 							if (getCharacterSetResults() == null) {
 								setCharacterSetResults("UTF-8");
 							}
 						}
 
-						if (dontCheckServerMatch || !characterSetNamesMatches(mysqlEncodingName) || ucs2) {
+						if (dontCheckServerMatch || !characterSetNamesMatches(mysqlCharsetName) || ucs2) {
 							try {
-								execSQL(null, "SET NAMES " + mysqlEncodingName, -1,
+								execSQL(null, "SET NAMES " + mysqlCharsetName, -1,
 										null, DEFAULT_RESULT_SET_TYPE,
 										DEFAULT_RESULT_SET_CONCURRENCY, false,
 										this.database, null, false);
@@ -2089,7 +2075,7 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements
 						mysqlEncodingName = "NULL";
 					} else {
 						mysqlEncodingName = CharsetMapping
-								.getMysqlEncodingForJavaEncoding(charsetResults
+								.getMysqlCharsetForJavaEncoding(charsetResults
 										.toUpperCase(Locale.ENGLISH), this);
 					}
 
@@ -3072,6 +3058,13 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements
 	}
 
 	/**
+	 * @deprecated replaced by <code>getEncodingForIndex(int charsetIndex)</code>
+	 */
+	public String getCharsetNameForIndex(int charsetIndex) throws SQLException {
+		return getEncodingForIndex(charsetIndex);
+	}
+
+	/**
 	 * Returns the Java character encoding name for the given MySQL server
 	 * charset index
 	 * 
@@ -3081,9 +3074,9 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements
 	 * @throws SQLException
 	 *             if the character set index isn't known by the driver
 	 */
-	public String getCharsetNameForIndex(int charsetIndex)
+	public String getEncodingForIndex(int charsetIndex)
 			throws SQLException {
-		String charsetName = null;
+		String javaEncoding = null;
 
 		if (getUseOldUTF8Behavior()) {
 			return getEncoding();
@@ -3091,17 +3084,12 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements
 
 		if (charsetIndex != MysqlDefs.NO_CHARSET_INFO) {
 			try {
-				charsetName = this.indexToJavaCharset.get(charsetIndex);
-				// checking against static maps if no custom charset found
-				if (charsetName==null) charsetName = CharsetMapping.INDEX_TO_CHARSET[charsetIndex];
-
-				if (this.characterEncodingIsAliasForSjis) {
-					if ("sjis".equalsIgnoreCase(charsetName) || 
-							"MS932".equalsIgnoreCase(charsetName) /* for JDK6 */) {
-						// Use our encoding so that code pages like Cp932 work
-						charsetName = getEncoding();
-					}
+				if (this.indexToMysqlCharset.size() > 0) {
+					javaEncoding = CharsetMapping.getJavaEncodingForMysqlCharset(this.indexToMysqlCharset.get(charsetIndex), getEncoding());
 				}
+				// checking against static maps if no custom charset found
+				if (javaEncoding==null) javaEncoding = CharsetMapping.getJavaEncodingForCollationIndex(charsetIndex, getEncoding());
+
 			} catch (ArrayIndexOutOfBoundsException outOfBoundsEx) {
 				throw SQLError.createSQLException(
 						"Unknown character set index for field '"
@@ -3114,14 +3102,14 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements
 			}
 
 			// Punt
-			if (charsetName == null) {
-				charsetName = getEncoding();
+			if (javaEncoding == null) {
+				javaEncoding = getEncoding();
 			}
 		} else {
-			charsetName = getEncoding();
+			javaEncoding = getEncoding();
 		}
 
-		return charsetName;
+		return javaEncoding;
 	}
 
 	/**
@@ -3216,15 +3204,11 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements
 				charset = this.indexToCustomMysqlCharset.get(charsetIndex);
 			}
 			// checking against static maps if no custom charset found
-			if (charset==null) charset = CharsetMapping.STATIC_INDEX_TO_MYSQL_CHARSET_MAP.get(charsetIndex);
+			if (charset==null) charset = CharsetMapping.getMysqlCharsetNameForCollationIndex(charsetIndex);
 
 			// if we didn't find charset name by index
 			if (charset == null) {
-				charset = CharsetMapping.getMysqlEncodingForJavaEncoding(javaCharsetName, this);
-				if ((this.io.serverCharsetIndex == 33) && (versionMeetsMinimum(5, 5, 3)) && (javaCharsetName.equalsIgnoreCase("UTF-8"))) {
-					//Avoid UTF8mb4
-					charset = "utf8";
-				}
+				charset = CharsetMapping.getMysqlCharsetForJavaEncoding(javaCharsetName, this);
 			}
 	
 			// checking against dynamic maps in connection
@@ -3234,8 +3218,7 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements
 			}
 
 			// checking against static maps
-			if (mblen == null) mblen = CharsetMapping.STATIC_CHARSET_TO_NUM_BYTES_MAP.get(charset);
-			if (mblen == null) mblen = CharsetMapping.STATIC_4_0_CHARSET_TO_NUM_BYTES_MAP.get(charset);
+			if (mblen == null) mblen = CharsetMapping.getMblen(charset);
 	
 			if (mblen != null) return mblen.intValue();
 		} catch (SQLException ex) {
@@ -3297,17 +3280,24 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements
 	}
 
 	/**
+	 * @deprecated replaced by <code>getServerCharset()</code>
+	 */
+	public String getServerCharacterEncoding() {
+		return getServerCharset();
+	}
+
+	/**
 	 * Returns the server's character set
 	 * 
 	 * @return the server's character set.
 	 */
-	public String getServerCharacterEncoding() {
+	public String getServerCharset() {
 		if (this.io.versionMeetsMinimum(4, 1, 0)) {
 			String charset = null;
 			if (this.indexToCustomMysqlCharset != null) {
 				charset = this.indexToCustomMysqlCharset.get(this.io.serverCharsetIndex);
 			}
-			if (charset == null) charset = CharsetMapping.STATIC_INDEX_TO_MYSQL_CHARSET_MAP.get(this.io.serverCharsetIndex);
+			if (charset == null) charset = CharsetMapping.getMysqlCharsetNameForCollationIndex(this.io.serverCharsetIndex);
 			return charset != null ? charset : this.serverVariables.get("character_set_server");
 		}
 		return this.serverVariables.get("character_set");
@@ -3770,14 +3760,14 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements
 				String defaultMetadataCharset = null;
 
 				if (defaultMetadataCharsetMysql != null) {
-					defaultMetadataCharset = getJavaEncodingForMysqlEncoding(defaultMetadataCharsetMysql);
+					defaultMetadataCharset = CharsetMapping.getJavaEncodingForMysqlCharset(defaultMetadataCharsetMysql);
 				} else {
 					defaultMetadataCharset = "UTF-8";
 				}
 
 				this.characterSetMetadata = defaultMetadataCharset;
 			} else {
-				this.characterSetResultsOnServer = getJavaEncodingForMysqlEncoding(characterSetResultsOnServerMysql);
+				this.characterSetResultsOnServer = CharsetMapping.getJavaEncodingForMysqlCharset(characterSetResultsOnServerMysql);
 				this.characterSetMetadata = this.characterSetResultsOnServer;
 			}
 		} else {
@@ -4212,6 +4202,7 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements
 					+ " OR Variable_name = 'sql_mode'"
 					+ " OR Variable_name = 'query_cache_type'"
 					+ " OR Variable_name = 'query_cache_size'"
+					+ " OR Variable_name = 'license'"
 					+ " OR Variable_name = 'init_connect'";
 			}
 			
