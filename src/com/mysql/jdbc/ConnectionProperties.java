@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2002, 2014, Oracle and/or its affiliates. All rights reserved.
+  Copyright (c) 2002, 2015, Oracle and/or its affiliates. All rights reserved.
 
   The MySQL Connector/J is licensed under the terms of the GPLv2
   <http://www.gnu.org/licenses/old-licenses/gpl-2.0.html>, like most MySQL Connectors.
@@ -978,6 +978,14 @@ public interface ConnectionProperties {
 
     public abstract void setNoTimezoneConversionForTimeType(boolean flag);
 
+    public abstract boolean getNoTimezoneConversionForDateType();
+
+    public abstract void setNoTimezoneConversionForDateType(boolean flag);
+
+    public abstract boolean getCacheDefaultTimezone();
+
+    public abstract void setCacheDefaultTimezone(boolean flag);
+
     public abstract boolean getUseJDBCCompliantTimezoneShift();
 
     public abstract void setUseJDBCCompliantTimezoneShift(boolean flag);
@@ -1387,4 +1395,12 @@ public interface ConnectionProperties {
     public void setSocksProxyPort(int socksProxyPort) throws SQLException;
 
     public int getSocksProxyPort();
+
+    public boolean getReadOnlyPropagatesToServer();
+
+    public void setReadOnlyPropagatesToServer(boolean flag);
+
+    public String getEnabledSSLCipherSuites();
+
+    public void setEnabledSSLCipherSuites(String cipherSuites);
 }

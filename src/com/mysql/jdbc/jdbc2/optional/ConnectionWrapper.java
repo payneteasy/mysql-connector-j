@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2002, 2014, Oracle and/or its affiliates. All rights reserved.
+  Copyright (c) 2002, 2015, Oracle and/or its affiliates. All rights reserved.
 
   The MySQL Connector/J is licensed under the terms of the GPLv2
   <http://www.gnu.org/licenses/old-licenses/gpl-2.0.html>, like most MySQL Connectors.
@@ -1365,6 +1365,14 @@ public class ConnectionWrapper extends WrapperBase implements Connection {
         return this.mc.getNoTimezoneConversionForTimeType();
     }
 
+    public boolean getNoTimezoneConversionForDateType() {
+        return this.mc.getNoTimezoneConversionForDateType();
+    }
+
+    public boolean getCacheDefaultTimezone() {
+        return this.mc.getCacheDefaultTimezone();
+    }
+
     public boolean getNullCatalogMeansCurrent() {
         return this.mc.getNullCatalogMeansCurrent();
     }
@@ -2031,6 +2039,14 @@ public class ConnectionWrapper extends WrapperBase implements Connection {
 
     public void setNoTimezoneConversionForTimeType(boolean flag) {
         this.mc.setNoTimezoneConversionForTimeType(flag);
+    }
+
+    public void setNoTimezoneConversionForDateType(boolean flag) {
+        this.mc.setNoTimezoneConversionForDateType(flag);
+    }
+
+    public void setCacheDefaultTimezone(boolean flag) {
+        this.mc.setCacheDefaultTimezone(flag);
     }
 
     public void setNullCatalogMeansCurrent(boolean value) {
@@ -2803,5 +2819,21 @@ public class ConnectionWrapper extends WrapperBase implements Connection {
 
     public int getSocksProxyPort() {
         return this.mc.getSocksProxyPort();
+    }
+
+    public boolean getReadOnlyPropagatesToServer() {
+        return this.mc.getReadOnlyPropagatesToServer();
+    }
+
+    public void setReadOnlyPropagatesToServer(boolean flag) {
+        this.mc.setReadOnlyPropagatesToServer(flag);
+    }
+
+    public String getEnabledSSLCipherSuites() {
+        return this.mc.getEnabledSSLCipherSuites();
+    }
+
+    public void setEnabledSSLCipherSuites(String cipherSuites) {
+        this.mc.setEnabledSSLCipherSuites(cipherSuites);
     }
 }

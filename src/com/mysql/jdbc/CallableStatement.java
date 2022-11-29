@@ -444,7 +444,7 @@ public class CallableStatement extends PreparedStatement implements java.sql.Cal
             offset = 1;
         }
 
-        StringBuffer paramNameBuf = new StringBuffer(PARAMETER_NAMESPACE_PREFIX.length() + origParameterName.length());
+        StringBuilder paramNameBuf = new StringBuilder(PARAMETER_NAMESPACE_PREFIX.length() + origParameterName.length());
         paramNameBuf.append(PARAMETER_NAMESPACE_PREFIX);
         paramNameBuf.append(origParameterName.substring(offset));
 
@@ -973,7 +973,7 @@ public class CallableStatement extends PreparedStatement implements java.sql.Cal
         }
 
         if (endCallIndex != -1) {
-            StringBuffer nameBuf = new StringBuffer();
+            StringBuilder nameBuf = new StringBuilder();
 
             String trimmedStatement = sanitizedSql.substring(endCallIndex + offset).trim();
 
@@ -1938,7 +1938,7 @@ public class CallableStatement extends PreparedStatement implements java.sql.Cal
             int localParamIndex = 0;
 
             if (numParameters > 0) {
-                StringBuffer outParameterQuery = new StringBuffer("SELECT ");
+                StringBuilder outParameterQuery = new StringBuilder("SELECT ");
 
                 boolean firstParam = true;
                 boolean hadOutputParams = false;
@@ -2090,7 +2090,7 @@ public class CallableStatement extends PreparedStatement implements java.sql.Cal
                         }
 
                         String inOutParameterName = mangleParameterName(inParamInfo.paramName);
-                        StringBuffer queryBuf = new StringBuffer(4 + inOutParameterName.length() + 1 + 1);
+                        StringBuilder queryBuf = new StringBuilder(4 + inOutParameterName.length() + 1 + 1);
                         queryBuf.append("SET ");
                         queryBuf.append(inOutParameterName);
                         queryBuf.append("=?");

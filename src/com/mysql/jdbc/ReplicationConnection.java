@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2004, 2014, Oracle and/or its affiliates. All rights reserved.
+  Copyright (c) 2004, 2015, Oracle and/or its affiliates. All rights reserved.
 
   The MySQL Connector/J is licensed under the terms of the GPLv2
   <http://www.gnu.org/licenses/old-licenses/gpl-2.0.html>, like most MySQL Connectors.
@@ -135,7 +135,7 @@ public class ReplicationConnection implements Connection, PingTarget {
         // get this value before we change the masterConnection reference:
         boolean isMaster = this.isMasterConnection();
 
-        StringBuffer masterUrl = new StringBuffer(NonRegisteringDriver.LOADBALANCE_URL_PREFIX);
+        StringBuilder masterUrl = new StringBuilder(NonRegisteringDriver.LOADBALANCE_URL_PREFIX);
 
         boolean firstHost = true;
         for (String host : this.masterHosts) {
@@ -189,7 +189,7 @@ public class ReplicationConnection implements Connection, PingTarget {
             return;
         }
 
-        StringBuffer slaveUrl = new StringBuffer(NonRegisteringDriver.LOADBALANCE_URL_PREFIX);
+        StringBuilder slaveUrl = new StringBuilder(NonRegisteringDriver.LOADBALANCE_URL_PREFIX);
 
         boolean firstHost = true;
         for (String host : this.slaveHosts) {
@@ -1340,6 +1340,14 @@ public class ReplicationConnection implements Connection, PingTarget {
         return getCurrentConnection().getNoTimezoneConversionForTimeType();
     }
 
+    public boolean getNoTimezoneConversionForDateType() {
+        return getCurrentConnection().getNoTimezoneConversionForDateType();
+    }
+
+    public boolean getCacheDefaultTimezone() {
+        return getCurrentConnection().getCacheDefaultTimezone();
+    }
+
     public boolean getNullCatalogMeansCurrent() {
         return getCurrentConnection().getNullCatalogMeansCurrent();
     }
@@ -2105,6 +2113,16 @@ public class ReplicationConnection implements Connection, PingTarget {
     }
 
     public void setNoTimezoneConversionForTimeType(boolean flag) {
+        // not runtime configurable
+
+    }
+
+    public void setNoTimezoneConversionForDateType(boolean flag) {
+        // not runtime configurable
+
+    }
+
+    public void setCacheDefaultTimezone(boolean flag) {
         // not runtime configurable
 
     }
@@ -2964,5 +2982,21 @@ public class ReplicationConnection implements Connection, PingTarget {
 
     public int getSocksProxyPort() {
         return getCurrentConnection().getSocksProxyPort();
+    }
+
+    public boolean getReadOnlyPropagatesToServer() {
+        return getCurrentConnection().getReadOnlyPropagatesToServer();
+    }
+
+    public void setReadOnlyPropagatesToServer(boolean flag) {
+        getCurrentConnection().setReadOnlyPropagatesToServer(flag);
+    }
+
+    public String getEnabledSSLCipherSuites() {
+        return getCurrentConnection().getEnabledSSLCipherSuites();
+    }
+
+    public void setEnabledSSLCipherSuites(String cipherSuites) {
+        getCurrentConnection().setEnabledSSLCipherSuites(cipherSuites);
     }
 }

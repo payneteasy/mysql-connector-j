@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2002, 2014, Oracle and/or its affiliates. All rights reserved.
+  Copyright (c) 2002, 2015, Oracle and/or its affiliates. All rights reserved.
 
   The MySQL Connector/J is licensed under the terms of the GPLv2
   <http://www.gnu.org/licenses/old-licenses/gpl-2.0.html>, like most MySQL Connectors.
@@ -307,7 +307,7 @@ public class MetaDataRegressionTest extends BaseTestCase {
 
             this.rs = dbmd.getTypeInfo();
 
-            StringBuffer types = new StringBuffer();
+            StringBuilder types = new StringBuilder();
 
             HashMap<String, String> alreadyDoneTypes = new HashMap<String, String>();
 
@@ -324,7 +324,7 @@ public class MetaDataRegressionTest extends BaseTestCase {
                         }
 
                         int typeNameLength = typeName.length();
-                        StringBuffer safeTypeName = new StringBuffer(typeNameLength);
+                        StringBuilder safeTypeName = new StringBuilder(typeNameLength);
 
                         for (int i = 0; i < typeNameLength; i++) {
                             char c = typeName.charAt(i);
@@ -538,7 +538,7 @@ public class MetaDataRegressionTest extends BaseTestCase {
 
             this.stmt.executeUpdate("DROP TABLE IF EXISTS testBug4138");
 
-            StringBuffer createBuf = new StringBuffer();
+            StringBuilder createBuf = new StringBuilder();
 
             createBuf.append("CREATE TABLE testBug4138 (");
 
@@ -573,7 +573,7 @@ public class MetaDataRegressionTest extends BaseTestCase {
 
             this.rs.close();
 
-            StringBuffer queryBuf = new StringBuffer("SELECT ");
+            StringBuilder queryBuf = new StringBuilder("SELECT ");
             firstColumn = true;
 
             for (int i = 0; i < typesToTest.length; i++) {
@@ -1361,7 +1361,7 @@ public class MetaDataRegressionTest extends BaseTestCase {
     }
 
     private void testBug18554(int columnNameLength) throws Exception {
-        StringBuffer buf = new StringBuffer(columnNameLength + 2);
+        StringBuilder buf = new StringBuilder(columnNameLength + 2);
 
         for (int i = 0; i < columnNameLength; i++) {
             buf.append((char) ((Math.random() * 26) + 65));
@@ -1745,7 +1745,7 @@ public class MetaDataRegressionTest extends BaseTestCase {
         expected.beforeFirst();
         actual.beforeFirst();
 
-        StringBuffer messageBuf = null;
+        StringBuilder messageBuf = null;
 
         while (expected.next() && actual.next()) {
 
@@ -1777,7 +1777,7 @@ public class MetaDataRegressionTest extends BaseTestCase {
                     }
 
                     if (messageBuf == null) {
-                        messageBuf = new StringBuffer();
+                        messageBuf = new StringBuilder();
                     } else {
                         messageBuf.append("\n");
                     }
@@ -2586,7 +2586,7 @@ public class MetaDataRegressionTest extends BaseTestCase {
         String user = oldProps.getProperty(NonRegisteringDriver.USER_PROPERTY_KEY);
         String password = oldProps.getProperty(NonRegisteringDriver.PASSWORD_PROPERTY_KEY);
 
-        StringBuffer newUrlToTestNoDB = new StringBuffer("jdbc:mysql://");
+        StringBuilder newUrlToTestNoDB = new StringBuilder("jdbc:mysql://");
 
         if (host != null) {
             newUrlToTestNoDB.append(host);
@@ -3281,14 +3281,8 @@ public class MetaDataRegressionTest extends BaseTestCase {
 
         testBug65871_testCatalog("db2`testbug65871", StringUtils.quoteIdentifier("db2`testbug65871", "\"", ((ConnectionProperties) conn1).getPedantic()), conn1);
 
-        try {
-            testBug65871_testCatalog("`db3`testbug65871`",
-                    StringUtils.quoteIdentifier("`db3`testbug65871`", "\"", ((ConnectionProperties) conn1).getPedantic()), conn1);
-            assertTrue("Driver should mistake about `db3`testbug65871` in non-pedantic mode", ((ConnectionProperties) conn1).getPedantic());
-        } catch (Exception e) {
-            System.out.println(e.getMessage());
-            assertFalse("Driver should not mistake about `db3`testbug65871` in pedantic mode", ((ConnectionProperties) conn1).getPedantic());
-        }
+        testBug65871_testCatalog("`db3`testbug65871`", StringUtils.quoteIdentifier("`db3`testbug65871`", "\"", ((ConnectionProperties) conn1).getPedantic()),
+                conn1);
     }
 
     private void testBug65871_testCatalog(String unquotedDbName, String quotedDbName, Connection conn1) throws Exception {
@@ -3317,14 +3311,8 @@ public class MetaDataRegressionTest extends BaseTestCase {
             testBug65871_testTable(unquotedDbName, quotedDbName, "table3\"testbug65871",
                     StringUtils.quoteIdentifier("table3\"testbug65871", "\"", ((ConnectionProperties) conn1).getPedantic()), conn1, st1);
 
-            try {
-                testBug65871_testTable(unquotedDbName, quotedDbName, "`table4`testbug65871`",
-                        StringUtils.quoteIdentifier("`table4`testbug65871`", "\"", ((ConnectionProperties) conn1).getPedantic()), conn1, st1);
-                assertTrue("Driver should mistake about `table4`testbug65871` in non-pedantic mode", ((ConnectionProperties) conn1).getPedantic());
-            } catch (Exception e) {
-                System.out.println(e.getMessage());
-                assertFalse("Driver should not mistake about `table4`testbug65871` in pedantic mode", ((ConnectionProperties) conn1).getPedantic());
-            }
+            testBug65871_testTable(unquotedDbName, quotedDbName, "`table4`testbug65871`",
+                    StringUtils.quoteIdentifier("`table4`testbug65871`", "\"", ((ConnectionProperties) conn1).getPedantic()), conn1, st1);
 
         } finally {
             if (st1 != null) {
@@ -3338,7 +3326,7 @@ public class MetaDataRegressionTest extends BaseTestCase {
     private void testBug65871_testTable(String unquotedDbName, String quotedDbName, String unquotedTableName, String quotedTableName, Connection conn1,
             Statement st1) throws Exception {
 
-        StringBuffer failedTests = new StringBuffer();
+        StringBuilder failedTests = new StringBuilder();
         try {
 
             String sql = "CREATE  TABLE " + quotedDbName + "." + quotedTableName + "(\"`B`EST`\" INT NOT NULL PRIMARY KEY, `C\"1` int(11) DEFAULT NULL,"
@@ -3883,5 +3871,93 @@ public class MetaDataRegressionTest extends BaseTestCase {
                 + "SHOW,SIGNAL,SPATIAL,SPECIFIC,SQLEXCEPTION,SQLWARNING,SQL_BIG_RESULT,SQL_CALC_FOUND_ROWS,SQL_SMALL_RESULT,SSL,STARTING,STRAIGHT_JOIN,TERMINATED,TINYBLOB,TINYINT,TINYTEXT,TRIGGER,"
                 + "UNDO,UNLOCK,UNSIGNED,USE,UTC_DATE,UTC_TIME,UTC_TIMESTAMP,VARBINARY,VARCHARACTER,WHILE,XOR,YEAR_MONTH,ZEROFILL";
         assertEquals("MySQL keywords don't match expected.", mysqlKeywords, this.conn.getMetaData().getSQLKeywords());
+    }
+
+    /**
+     * Tests fix for BUG#20504139 - GETFUNCTIONCOLUMNS() AND GETPROCEDURECOLUMNS() RETURNS ERROR FOR VALID INPUTS.
+     * 
+     * Test duplicated in testsuite.regression.jdbc4.MetaDataRegressionTest.
+     * 
+     * @throws Exception
+     *             if the test fails.
+     */
+    public void testBug20504139() throws Exception {
+        if (Util.isJdbc4()) {
+            // there is a specific JCDB4 test for this
+            return;
+        }
+
+        createFunction("testBug20504139f", "(namef CHAR(20)) RETURNS CHAR(50) DETERMINISTIC RETURN CONCAT('Hello, ', namef, '!')");
+        createFunction("`testBug20504139``f`", "(namef CHAR(20)) RETURNS CHAR(50) DETERMINISTIC RETURN CONCAT('Hello, ', namef, '!')");
+        createProcedure("testBug20504139p", "(INOUT namep CHAR(50)) SELECT  CONCAT('Hello, ', namep, '!') INTO namep");
+        createProcedure("`testBug20504139``p`", "(INOUT namep CHAR(50)) SELECT  CONCAT('Hello, ', namep, '!') INTO namep");
+
+        for (int testCase = 0; testCase < 8; testCase++) { // 3 props, 8 combinations: 2^3 = 8
+            boolean usePedantic = (testCase & 1) == 1;
+            boolean useInformationSchema = (testCase & 2) == 2;
+            boolean useFuncsInProcs = (testCase & 4) == 4;
+
+            String connProps = String.format("pedantic=%s,useInformationSchema=%s,getProceduresReturnsFunctions=%s", usePedantic, useInformationSchema,
+                    useFuncsInProcs);
+            System.out.printf("testBug20504139_%d: %s%n", testCase, connProps);
+
+            Connection testConn = getConnectionWithProps(connProps);
+            DatabaseMetaData dbmd = testConn.getMetaData();
+
+            ResultSet testRs = null;
+
+            try {
+                /*
+                 * test DatabaseMetadata.getProcedureColumns for function
+                 */
+                int i = 1;
+                try {
+                    for (String name : new String[] { "testBug20504139f", "testBug20504139`f" }) {
+                        testRs = dbmd.getProcedureColumns(null, "", name, "%");
+
+                        assertTrue(testRs.next());
+                        assertEquals(testCase + "." + i + ". expected function column name (empty)", "", testRs.getString(4));
+                        assertEquals(testCase + "." + i + ". expected function column type (empty)", DatabaseMetaData.procedureColumnReturn, testRs.getInt(5));
+                        assertTrue(testRs.next());
+                        assertEquals(testCase + "." + i + ". expected function column name", "namef", testRs.getString(4));
+                        assertEquals(testCase + "." + i + ". expected function column type (empty)", DatabaseMetaData.procedureColumnIn, testRs.getInt(5));
+                        assertFalse(testRs.next());
+
+                        testRs.close();
+                        i++;
+                    }
+                } catch (SQLException e) {
+                    if (e.getMessage().matches("FUNCTION `testBug20504139(:?`{2})?[fp]` does not exist")) {
+                        fail(testCase + "." + i + ". failed to retrieve function columns from database meta data.");
+                    }
+                    throw e;
+                }
+
+                /*
+                 * test DatabaseMetadata.getProcedureColumns for procedure
+                 */
+                i = 1;
+                try {
+                    for (String name : new String[] { "testBug20504139p", "testBug20504139`p" }) {
+                        testRs = dbmd.getProcedureColumns(null, "", name, "%");
+
+                        assertTrue(testRs.next());
+                        assertEquals(testCase + "." + i + ". expected procedure column name", "namep", testRs.getString(4));
+                        assertEquals(testCase + "." + i + ". expected procedure column type (empty)", DatabaseMetaData.procedureColumnInOut, testRs.getInt(5));
+                        assertFalse(testRs.next());
+
+                        testRs.close();
+                        i++;
+                    }
+                } catch (SQLException e) {
+                    if (e.getMessage().matches("PROCEDURE `testBug20504139(:?`{2})?[fp]` does not exist")) {
+                        fail(testCase + "." + i + ". failed to retrieve procedure columns from database meta data.");
+                    }
+                    throw e;
+                }
+            } finally {
+                testConn.close();
+            }
+        }
     }
 }

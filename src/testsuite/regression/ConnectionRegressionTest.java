@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2002, 2014, Oracle and/or its affiliates. All rights reserved.
+  Copyright (c) 2002, 2015, Oracle and/or its affiliates. All rights reserved.
 
   The MySQL Connector/J is licensed under the terms of the GPLv2
   <http://www.gnu.org/licenses/old-licenses/gpl-2.0.html>, like most MySQL Connectors.
@@ -50,7 +50,9 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Calendar;
 import java.util.Date;
 import java.util.Enumeration;
 import java.util.HashMap;
@@ -59,8 +61,10 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.Properties;
 import java.util.Set;
+import java.util.TimeZone;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
@@ -92,6 +96,7 @@ import com.mysql.jdbc.ConnectionImpl;
 import com.mysql.jdbc.ConnectionProperties;
 import com.mysql.jdbc.Driver;
 import com.mysql.jdbc.ExceptionInterceptor;
+import com.mysql.jdbc.LoadBalanceExceptionChecker;
 import com.mysql.jdbc.LoadBalancingConnectionProxy;
 import com.mysql.jdbc.Messages;
 import com.mysql.jdbc.MySQLConnection;
@@ -107,6 +112,7 @@ import com.mysql.jdbc.StandardSocketFactory;
 import com.mysql.jdbc.StatementInterceptorV2;
 import com.mysql.jdbc.StringUtils;
 import com.mysql.jdbc.TimeUtil;
+import com.mysql.jdbc.Util;
 import com.mysql.jdbc.exceptions.MySQLNonTransientConnectionException;
 import com.mysql.jdbc.integration.jboss.MysqlValidConnectionChecker;
 import com.mysql.jdbc.jdbc2.optional.MysqlConnectionPoolDataSource;
@@ -270,7 +276,7 @@ public class ConnectionRegressionTest extends BaseTestCase {
                     // statement to pick this up...
                     charsetStmt = charsetConn.createStatement();
 
-                    StringBuffer createTableCommand = new StringBuffer("CREATE TABLE testCollation41(field1 VARCHAR(255), field2 INT)");
+                    StringBuilder createTableCommand = new StringBuilder("CREATE TABLE testCollation41(field1 VARCHAR(255), field2 INT)");
 
                     charsetStmt.executeUpdate(createTableCommand.toString());
 
@@ -411,7 +417,7 @@ public class ConnectionRegressionTest extends BaseTestCase {
                 String user = oldProps.getProperty(NonRegisteringDriver.USER_PROPERTY_KEY);
                 String password = oldProps.getProperty(NonRegisteringDriver.PASSWORD_PROPERTY_KEY);
 
-                StringBuffer newUrlToTestPortNum = new StringBuffer("jdbc:mysql://");
+                StringBuilder newUrlToTestPortNum = new StringBuilder("jdbc:mysql://");
 
                 if (host != null) {
                     newUrlToTestPortNum.append(host);
@@ -479,7 +485,7 @@ public class ConnectionRegressionTest extends BaseTestCase {
                 //
                 // Now make sure failover works
                 //
-                StringBuffer newUrlToTestFailover = new StringBuffer("jdbc:mysql://");
+                StringBuilder newUrlToTestFailover = new StringBuilder("jdbc:mysql://");
 
                 if (host != null) {
                     newUrlToTestFailover.append(host);
@@ -583,20 +589,18 @@ public class ConnectionRegressionTest extends BaseTestCase {
                 failoverConnection.createStatement().executeQuery("SELECT 1");
             }
 
-            ((com.mysql.jdbc.Connection) failoverConnection).clearHasTriedMaster();
             UnreliableSocketFactory.dontDownHost("master");
 
             failoverConnection.setAutoCommit(true);
 
             String newConnectionId = getSingleIndexedValueWithQuery(failoverConnection, 1, "SELECT CONNECTION_ID()").toString();
 
-            assertTrue(((com.mysql.jdbc.Connection) failoverConnection).hasTriedMaster());
-
-            assertTrue(!newConnectionId.equals(originalConnectionId));
+            assertEquals("/master", UnreliableSocketFactory.getHostFromLastConnection());
+            assertFalse(newConnectionId.equals(originalConnectionId));
 
             failoverConnection.createStatement().executeQuery("SELECT 1");
         } finally {
-            UnreliableSocketFactory.flushAllHostLists();
+            UnreliableSocketFactory.flushAllStaticData();
 
             if (failoverConnection != null) {
                 failoverConnection.close();
@@ -636,7 +640,6 @@ public class ConnectionRegressionTest extends BaseTestCase {
 
         try {
             failoverConnection = getConnectionWithProps("jdbc:mysql://" + host + "/", props);
-            ((com.mysql.jdbc.Connection) failoverConnection).setPreferSlaveDuringFailover(true);
             failoverConnection.setAutoCommit(false);
 
             String failoverConnectionId = getSingleIndexedValueWithQuery(failoverConnection, 1, "SELECT CONNECTION_ID()").toString();
@@ -653,7 +656,6 @@ public class ConnectionRegressionTest extends BaseTestCase {
                 assertTrue("08S01".equals(sqlEx.getSQLState()));
             }
 
-            ((com.mysql.jdbc.Connection) failoverConnection).setPreferSlaveDuringFailover(false);
             ((com.mysql.jdbc.Connection) failoverConnection).setFailedOver(true);
 
             failoverConnection.setAutoCommit(true);
@@ -661,7 +663,6 @@ public class ConnectionRegressionTest extends BaseTestCase {
             String failedConnectionId = getSingleIndexedValueWithQuery(failoverConnection, 1, "SELECT CONNECTION_ID()").toString();
             System.out.println("Failed over connection id: " + failedConnectionId);
 
-            ((com.mysql.jdbc.Connection) failoverConnection).setPreferSlaveDuringFailover(false);
             ((com.mysql.jdbc.Connection) failoverConnection).setFailedOver(true);
 
             for (int i = 0; i < 30; i++) {
@@ -1195,7 +1196,7 @@ public class ConnectionRegressionTest extends BaseTestCase {
 
             profileConn = getConnectionWithProps(props);
 
-            StringBuffer queryBuf = new StringBuffer("SELECT '");
+            StringBuilder queryBuf = new StringBuilder("SELECT '");
 
             for (int i = 0; i < 500; i++) {
                 queryBuf.append("a");
@@ -1239,7 +1240,7 @@ public class ConnectionRegressionTest extends BaseTestCase {
      *             if the test fails
      */
     public void testBug13453() throws Exception {
-        StringBuffer urlBuf = new StringBuffer(dbUrl);
+        StringBuilder urlBuf = new StringBuilder(dbUrl);
 
         if (dbUrl.indexOf('?') == -1) {
             urlBuf.append('?');
@@ -1507,7 +1508,7 @@ public class ConnectionRegressionTest extends BaseTestCase {
         props.remove("PORT");
         props.remove("HOST");
 
-        StringBuffer newHostBuf = new StringBuffer();
+        StringBuilder newHostBuf = new StringBuilder();
 
         newHostBuf.append(host);
 
@@ -1559,9 +1560,7 @@ public class ConnectionRegressionTest extends BaseTestCase {
         props.setProperty("profileSQL", "true");
         Connection c = null;
 
-        StringBuffer logBuf = new StringBuffer();
-
-        StandardLogger.bufferedLog = logBuf;
+        StandardLogger.startLoggingToBuffer();
 
         try {
             c = getConnectionWithProps(props);
@@ -1574,7 +1573,7 @@ public class ConnectionRegressionTest extends BaseTestCase {
 
             // We should only see _one_ "set autocommit=" sent to the server
 
-            String log = logBuf.toString();
+            String log = StandardLogger.getBuffer().toString();
             int searchFrom = 0;
             int count = 0;
             int found = 0;
@@ -1587,7 +1586,7 @@ public class ConnectionRegressionTest extends BaseTestCase {
             // The SELECT doesn't actually start a transaction, so being pedantic the driver issues SET autocommit=0 again in this case.
             assertEquals(2, count);
         } finally {
-            StandardLogger.bufferedLog = null;
+            StandardLogger.dropBuffer();
 
             if (c != null) {
                 c.close();
@@ -1664,8 +1663,8 @@ public class ConnectionRegressionTest extends BaseTestCase {
         Class<?> clazz = this.conn.getClass();
 
         DriverPropertyInfo[] dpi = new NonRegisteringDriver().getPropertyInfo(dbUrl, null);
-        StringBuffer missingSettersBuf = new StringBuffer();
-        StringBuffer missingGettersBuf = new StringBuffer();
+        StringBuilder missingSettersBuf = new StringBuilder();
+        StringBuilder missingGettersBuf = new StringBuilder();
 
         Class<?>[][] argTypes = { new Class[] { String.class }, new Class[] { Integer.TYPE }, new Class[] { Long.TYPE }, new Class[] { Boolean.TYPE } };
 
@@ -1678,11 +1677,11 @@ public class ConnectionRegressionTest extends BaseTestCase {
                 continue;
             }
 
-            StringBuffer mutatorName = new StringBuffer("set");
+            StringBuilder mutatorName = new StringBuilder("set");
             mutatorName.append(Character.toUpperCase(propertyName.charAt(0)));
             mutatorName.append(propertyName.substring(1));
 
-            StringBuffer accessorName = new StringBuffer("get");
+            StringBuilder accessorName = new StringBuilder("get");
             accessorName.append(Character.toUpperCase(propertyName.charAt(0)));
             accessorName.append(propertyName.substring(1));
 
@@ -1749,6 +1748,9 @@ public class ConnectionRegressionTest extends BaseTestCase {
             Properties props = new Properties();
             props.setProperty("useSSL", "true");
             props.setProperty("requireSSL", "true");
+            if (Util.getJVMVersion() < 8 && versionMeetsMinimum(5, 7, 6) && isCommunityEdition()) {
+                props.setProperty("enabledSSLCipherSuites", SSL_CIPHERS_FOR_576);
+            }
 
             sslConn = getConnectionWithProps(props);
             sslConn.prepareCall("{ call testBug25545()}").execute();
@@ -1786,9 +1788,10 @@ public class ConnectionRegressionTest extends BaseTestCase {
                 hostSpec = host + ":" + port;
             }
 
+            final boolean sslRequirementsFor576 = Util.getJVMVersion() < 8 && versionMeetsMinimum(5, 7, 6) && isCommunityEdition();
             final String url = "jdbc:mysql://" + hostSpec + "/" + db + "?useSSL=true&requireSSL=true&verifyServerCertificate=true"
                     + "&trustCertificateKeyStoreUrl=file:src/testsuite/ssl-test-certs/test-cert-store&trustCertificateKeyStoreType=JKS"
-                    + "&trustCertificateKeyStorePassword=password";
+                    + "&trustCertificateKeyStorePassword=password" + (sslRequirementsFor576 ? "&enabledSSLCipherSuites=" + SSL_CIPHERS_FOR_576 : "");
 
             _conn = DriverManager.getConnection(url, (String) this.getPropertiesFromTestsuiteUrl().get("user"), (String) this.getPropertiesFromTestsuiteUrl()
                     .get("password"));
@@ -1809,11 +1812,10 @@ public class ConnectionRegressionTest extends BaseTestCase {
      * @throws Exception
      */
     public void testBug27655() throws Exception {
-        StringBuffer logBuf = new StringBuffer();
         Properties props = new Properties();
         props.setProperty("profileSQL", "true");
         props.setProperty("logger", "StandardLogger");
-        StandardLogger.bufferedLog = logBuf;
+        StandardLogger.startLoggingToBuffer();
 
         Connection loggedConn = null;
 
@@ -1822,9 +1824,10 @@ public class ConnectionRegressionTest extends BaseTestCase {
             loggedConn.getTransactionIsolation();
 
             if (versionMeetsMinimum(4, 0, 3)) {
-                assertEquals(-1, logBuf.toString().indexOf("SHOW VARIABLES LIKE 'tx_isolation'"));
+                assertEquals(-1, StandardLogger.getBuffer().toString().indexOf("SHOW VARIABLES LIKE 'tx_isolation'"));
             }
         } finally {
+            StandardLogger.dropBuffer();
             if (loggedConn != null) {
                 loggedConn.close();
             }
@@ -1842,6 +1845,8 @@ public class ConnectionRegressionTest extends BaseTestCase {
     public void testFailoverReadOnly() throws Exception {
         Properties props = getMasterSlaveProps();
         props.setProperty("autoReconnect", "true");
+        props.setProperty("queriesBeforeRetryMaster", "0");
+        props.setProperty("secondsBeforeRetryMaster", "0"); // +^ enable fall back to primary as soon as possible
 
         Connection failoverConn = null;
 
@@ -1849,8 +1854,6 @@ public class ConnectionRegressionTest extends BaseTestCase {
 
         try {
             failoverConn = getConnectionWithProps(getMasterSlaveUrl(), props);
-
-            ((com.mysql.jdbc.Connection) failoverConn).setPreferSlaveDuringFailover(true);
 
             failoverStmt = failoverConn.createStatement();
 
@@ -1875,8 +1878,6 @@ public class ConnectionRegressionTest extends BaseTestCase {
 
             assertTrue(failoverConn.isReadOnly());
 
-            ((com.mysql.jdbc.Connection) failoverConn).setPreferSlaveDuringFailover(false);
-
             this.stmt.execute("KILL " + slaveConnectionId); // we can't issue this on our own connection :p
 
             // die trying, so we get the next host
@@ -1894,7 +1895,7 @@ public class ConnectionRegressionTest extends BaseTestCase {
 
             failoverConn.setReadOnly(false);
 
-            assertTrue(!failoverConn.isReadOnly());
+            assertFalse(failoverConn.isReadOnly());
         } finally {
             if (failoverStmt != null) {
                 failoverStmt.close();
@@ -2061,7 +2062,7 @@ public class ConnectionRegressionTest extends BaseTestCase {
 
     public void testBug34937() throws Exception {
         com.mysql.jdbc.jdbc2.optional.MysqlConnectionPoolDataSource ds = new com.mysql.jdbc.jdbc2.optional.MysqlConnectionPoolDataSource();
-        StringBuffer urlBuf = new StringBuffer();
+        StringBuilder urlBuf = new StringBuilder();
         urlBuf.append(getMasterSlaveUrl());
         urlBuf.append("?");
         Properties props = getMasterSlaveProps();
@@ -2327,7 +2328,7 @@ public class ConnectionRegressionTest extends BaseTestCase {
         } catch (SQLException e) {
             fail("Should not fail to execute SELECT statements!");
         }
-        UnreliableSocketFactory.flushAllHostLists();
+        UnreliableSocketFactory.flushAllStaticData();
         conn2.setReadOnly(false);
         assertFalse(conn2.isReadOnly());
         assertTrue(conn2.isMasterConnection());
@@ -2499,7 +2500,7 @@ public class ConnectionRegressionTest extends BaseTestCase {
         } catch (SQLException sqlEx) {
         }
 
-        UnreliableSocketFactory.flushAllHostLists();
+        UnreliableSocketFactory.flushAllStaticData();
         props = new Properties();
         props.setProperty("globalBlacklistTimeout", "200");
         props.setProperty("loadBalanceStrategy", "bestResponseTime");
@@ -2572,7 +2573,7 @@ public class ConnectionRegressionTest extends BaseTestCase {
     public void testBug44587() throws Exception {
         Exception e = null;
         String msg = SQLError.createLinkFailureMessageBasedOnHeuristics((MySQLConnection) this.conn, System.currentTimeMillis() - 1000,
-                System.currentTimeMillis() - 2000, e, false);
+                System.currentTimeMillis() - 2000, e);
         assertTrue(containsMessage(msg, "CommunicationsException.ServerPacketTimingInfo"));
     }
 
@@ -2583,7 +2584,7 @@ public class ConnectionRegressionTest extends BaseTestCase {
     public void testBug45419() throws Exception {
         Exception e = null;
         String msg = SQLError.createLinkFailureMessageBasedOnHeuristics((MySQLConnection) this.conn, System.currentTimeMillis() - 1000,
-                System.currentTimeMillis() - 2000, e, false);
+                System.currentTimeMillis() - 2000, e);
         Matcher m = Pattern.compile("([\\d\\,\\.]+)", Pattern.MULTILINE).matcher(msg);
         assertTrue(m.find());
         assertTrue(Long.parseLong(m.group(0).replaceAll("[,.]", "")) >= 2000);
@@ -2605,7 +2606,7 @@ public class ConnectionRegressionTest extends BaseTestCase {
         Properties props = new Properties();
         copyBasePropertiesIntoProps(props, driver);
         String hostname = getPortFreeHostname(props, driver);
-        UnreliableSocketFactory.flushAllHostLists();
+        UnreliableSocketFactory.flushAllStaticData();
         UnreliableSocketFactory.downHost(hostname);
 
         try {
@@ -2614,7 +2615,7 @@ public class ConnectionRegressionTest extends BaseTestCase {
         } catch (SQLException sqlEx) {
             assertTrue(sqlEx.getMessage().indexOf("has not received") != -1);
         } finally {
-            UnreliableSocketFactory.flushAllHostLists();
+            UnreliableSocketFactory.flushAllStaticData();
         }
     }
 
@@ -2626,7 +2627,7 @@ public class ConnectionRegressionTest extends BaseTestCase {
     private void checkBug32216(String host, String port, String dbname) throws SQLException {
         NonRegisteringDriver driver = new NonRegisteringDriver();
 
-        StringBuffer url = new StringBuffer("jdbc:mysql://");
+        StringBuilder url = new StringBuilder("jdbc:mysql://");
         url.append(host);
 
         if (port != null) {
@@ -3151,8 +3152,8 @@ public class ConnectionRegressionTest extends BaseTestCase {
         props.remove(NonRegisteringDriver.PORT_PROPERTY_KEY + ".1");
 
         props.setProperty("queriesBeforeRetryMaster", "0");
-        props.setProperty("failOverReadOnly", "false");
         props.setProperty("secondsBeforeRetryMaster", "1");
+        props.setProperty("failOverReadOnly", "false");
 
         UnreliableSocketFactory.mapHost("master", host);
         UnreliableSocketFactory.mapHost("slave", host);
@@ -3163,7 +3164,7 @@ public class ConnectionRegressionTest extends BaseTestCase {
             failoverConnection = getConnectionWithProps("jdbc:mysql://master:" + port + ",slave:" + port + "/", props);
             failoverConnection.setAutoCommit(false);
 
-            assertTrue(((com.mysql.jdbc.Connection) failoverConnection).isMasterConnection());
+            assertEquals("/master", UnreliableSocketFactory.getHostFromLastConnection());
 
             for (int i = 0; i < 50; i++) {
                 failoverConnection.createStatement().executeQuery("SELECT 1");
@@ -3179,7 +3180,7 @@ public class ConnectionRegressionTest extends BaseTestCase {
             }
 
             failoverConnection.setAutoCommit(true);
-            assertTrue(!((com.mysql.jdbc.Connection) failoverConnection).isMasterConnection());
+            assertEquals("/slave", UnreliableSocketFactory.getHostFromLastConnection());
             assertTrue(!failoverConnection.isReadOnly());
             failoverConnection.createStatement().executeQuery("SELECT 1");
             failoverConnection.createStatement().executeQuery("SELECT 1");
@@ -3187,10 +3188,10 @@ public class ConnectionRegressionTest extends BaseTestCase {
             Thread.sleep(2000);
             failoverConnection.setAutoCommit(true);
             failoverConnection.createStatement().executeQuery("SELECT 1");
-            assertTrue(((com.mysql.jdbc.Connection) failoverConnection).isMasterConnection());
+            assertEquals("/master", UnreliableSocketFactory.getHostFromLastConnection());
             failoverConnection.createStatement().executeQuery("SELECT 1");
         } finally {
-            UnreliableSocketFactory.flushAllHostLists();
+            UnreliableSocketFactory.flushAllStaticData();
 
             if (failoverConnection != null) {
                 failoverConnection.close();
@@ -4010,6 +4011,9 @@ public class ConnectionRegressionTest extends BaseTestCase {
                     System.setProperty("javax.net.ssl.trustStore", trustStorePath);
                     System.setProperty("javax.net.ssl.trustStorePassword", "password");
                     props.setProperty("useSSL", "true");
+                    if (Util.getJVMVersion() < 8 && versionMeetsMinimum(5, 7, 6) && isCommunityEdition()) {
+                        props.setProperty("enabledSSLCipherSuites", SSL_CIPHERS_FOR_576);
+                    }
                     testConn = getConnectionWithProps(props);
 
                     assertTrue("SSL connection isn't actually established!", ((MySQLConnection) testConn).getIO().isSSLEstablished());
@@ -4080,7 +4084,8 @@ public class ConnectionRegressionTest extends BaseTestCase {
                 this.stmt.executeUpdate("grant all on *.* to 'wl5602nopassword'@'%' identified WITH sha256_password");
                 this.stmt.executeUpdate("SET GLOBAL old_passwords= 2");
                 this.stmt.executeUpdate("SET SESSION old_passwords= 2");
-                this.stmt.executeUpdate("set password for 'wl5602user'@'%' = PASSWORD('pwd')");
+                this.stmt.executeUpdate(versionMeetsMinimum(5, 7, 6) ? "ALTER USER 'wl5602user'@'%' IDENTIFIED BY 'pwd'"
+                        : "set password for 'wl5602user'@'%' = PASSWORD('pwd')");
                 this.stmt.executeUpdate("flush privileges");
 
                 final Properties propsNoRetrieval = new Properties();
@@ -4147,6 +4152,12 @@ public class ConnectionRegressionTest extends BaseTestCase {
                 propsNoRetrievalNoPassword.setProperty("useSSL", "true");
                 propsAllowRetrieval.setProperty("useSSL", "true");
                 propsAllowRetrievalNoPassword.setProperty("useSSL", "true");
+                if (Util.getJVMVersion() < 8 && versionMeetsMinimum(5, 7, 6) && isCommunityEdition()) {
+                    propsNoRetrieval.setProperty("enabledSSLCipherSuites", SSL_CIPHERS_FOR_576);
+                    propsNoRetrievalNoPassword.setProperty("enabledSSLCipherSuites", SSL_CIPHERS_FOR_576);
+                    propsAllowRetrieval.setProperty("enabledSSLCipherSuites", SSL_CIPHERS_FOR_576);
+                    propsAllowRetrievalNoPassword.setProperty("enabledSSLCipherSuites", SSL_CIPHERS_FOR_576);
+                }
 
                 assertCurrentUser(null, propsNoRetrieval, "wl5602user", true);
                 assertCurrentUser(null, propsNoRetrievalNoPassword, "wl5602nopassword", false);
@@ -4198,7 +4209,8 @@ public class ConnectionRegressionTest extends BaseTestCase {
                 s1.executeUpdate("grant all on *.* to 'wl5602nopassword'@'%' identified WITH sha256_password");
                 s1.executeUpdate("SET GLOBAL old_passwords= 2");
                 s1.executeUpdate("SET SESSION old_passwords= 2");
-                s1.executeUpdate("set password for 'wl5602user'@'%' = PASSWORD('pwd')");
+                s1.executeUpdate(versionMeetsMinimum(5, 7, 6) ? "ALTER USER 'wl5602user'@'%' IDENTIFIED BY 'pwd'"
+                        : "set password for 'wl5602user'@'%' = PASSWORD('pwd')");
                 s1.executeUpdate("flush privileges");
 
                 final Properties propsNoRetrieval = new Properties();
@@ -4809,10 +4821,10 @@ public class ConnectionRegressionTest extends BaseTestCase {
 
         createTable("testBug11237", "(field1 VARCHAR(1024), field2 VARCHAR(1024))");
 
-        StringBuffer fileNameBuf = null;
+        StringBuilder fileNameBuf = null;
 
         if (File.separatorChar == '\\') {
-            fileNameBuf = new StringBuffer();
+            fileNameBuf = new StringBuilder();
 
             String fileName = testFile.getAbsolutePath();
             int fileNameLength = fileName.length();
@@ -4827,7 +4839,7 @@ public class ConnectionRegressionTest extends BaseTestCase {
                 }
             }
         } else {
-            fileNameBuf = new StringBuffer(testFile.getAbsolutePath());
+            fileNameBuf = new StringBuilder(testFile.getAbsolutePath());
         }
 
         Properties props = new Properties();
@@ -4865,7 +4877,8 @@ public class ConnectionRegressionTest extends BaseTestCase {
 
                 this.stmt.executeUpdate("grant all on `" + dbname + "`.* to 'must_change1'@'%' IDENTIFIED BY 'aha'");
                 this.stmt.executeUpdate("grant all on `" + dbname + "`.* to 'must_change2'@'%' IDENTIFIED BY 'aha'");
-                this.stmt.executeUpdate("ALTER USER 'must_change1'@'%' PASSWORD EXPIRE, 'must_change2'@'%' PASSWORD EXPIRE");
+                this.stmt.executeUpdate(versionMeetsMinimum(5, 7, 6) ? "ALTER USER 'must_change1'@'%', 'must_change2'@'%' PASSWORD EXPIRE"
+                        : "ALTER USER 'must_change1'@'%' PASSWORD EXPIRE, 'must_change2'@'%' PASSWORD EXPIRE");
 
                 Properties props = new Properties();
 
@@ -4874,11 +4887,13 @@ public class ConnectionRegressionTest extends BaseTestCase {
                     props.setProperty("useServerPrepStmts", "true");
                     testConn = getConnectionWithProps(props);
 
-                    this.pstmt = testConn.prepareStatement("ALTER USER 'must_change1'@'%' PASSWORD EXPIRE, 'must_change2'@'%' PASSWORD EXPIRE");
+                    this.pstmt = testConn.prepareStatement(versionMeetsMinimum(5, 7, 6) ? "ALTER USER 'must_change1'@'%', 'must_change2'@'%' PASSWORD EXPIRE"
+                            : "ALTER USER 'must_change1'@'%' PASSWORD EXPIRE, 'must_change2'@'%' PASSWORD EXPIRE");
                     this.pstmt.executeUpdate();
                     this.pstmt.close();
 
-                    this.pstmt = testConn.prepareStatement("ALTER USER ? PASSWORD EXPIRE, 'must_change2'@'%' PASSWORD EXPIRE");
+                    this.pstmt = testConn.prepareStatement(versionMeetsMinimum(5, 7, 6) ? "ALTER USER ?, 'must_change2'@'%' PASSWORD EXPIRE"
+                            : "ALTER USER ? PASSWORD EXPIRE, 'must_change2'@'%' PASSWORD EXPIRE");
                     this.pstmt.setString(1, "must_change1");
                     this.pstmt.executeUpdate();
                     this.pstmt.close();
@@ -4908,7 +4923,8 @@ public class ConnectionRegressionTest extends BaseTestCase {
                                 testConn = getConnectionWithProps(props);
                                 testSt = testConn.createStatement();
                             }
-                            testSt.executeUpdate("SET PASSWORD = PASSWORD('newpwd')");
+                            testSt.executeUpdate(versionMeetsMinimum(5, 7, 6) ? "ALTER USER USER() IDENTIFIED BY 'newpwd'"
+                                    : "SET PASSWORD = PASSWORD('newpwd')");
                             testConn.close();
 
                             props.setProperty("user", "must_change1");
@@ -4941,7 +4957,8 @@ public class ConnectionRegressionTest extends BaseTestCase {
                                             testConn = getConnectionWithProps(props);
                                             testSt = testConn.createStatement();
                                         }
-                                        testSt.executeUpdate("SET PASSWORD = PASSWORD('newpwd')");
+                                        testSt.executeUpdate(versionMeetsMinimum(5, 7, 6) ? "ALTER USER USER() IDENTIFIED BY 'newpwd'"
+                                                : "SET PASSWORD = PASSWORD('newpwd')");
                                         testConn.close();
 
                                         props.setProperty("user", "must_change2");
@@ -5262,7 +5279,7 @@ public class ConnectionRegressionTest extends BaseTestCase {
         conn2.createStatement().execute("/* ping */ SELECT 1");
 
         // make all hosts available
-        UnreliableSocketFactory.flushAllHostLists();
+        UnreliableSocketFactory.flushAllStaticData();
 
         // peg connection to slave2:
         ForcedLoadBalanceStrategy.forceFutureServer("slave2:" + portNumber, -1);
@@ -5302,7 +5319,7 @@ public class ConnectionRegressionTest extends BaseTestCase {
         conn2.close();
 
         ForcedLoadBalanceStrategy.forceFutureServer("slave1:" + portNumber, -1);
-        UnreliableSocketFactory.flushAllHostLists();
+        UnreliableSocketFactory.flushAllStaticData();
         conn2 = this.getUnreliableReplicationConnection(new String[] { "master", "slave1", "slave2" }, props);
         conn2.setAutoCommit(false);
         // go to slaves:
@@ -5846,10 +5863,14 @@ public class ConnectionRegressionTest extends BaseTestCase {
                 s1.executeUpdate("grant all on *.* to 'wl6134user'@'%' identified WITH sha256_password");
                 s1.executeUpdate("SET GLOBAL old_passwords= 2");
                 s1.executeUpdate("SET SESSION old_passwords= 2");
-                s1.executeUpdate("set password for 'wl6134user'@'%' = PASSWORD('aaaaaaaaaabbbbbbbbbbccccccccccddddddddddeeeeeeeeee"
+                s1.executeUpdate(versionMeetsMinimum(5, 7, 6) ? "ALTER USER 'wl6134user'@'%' IDENTIFIED BY 'aaaaaaaaaabbbbbbbbbbccccccccccddddddddddeeeeeeeeee"
                         + "aaaaaaaaaabbbbbbbbbbccccccccccddddddddddeeeeeeeeeeaaaaaaaaaabbbbbbbbbbccccccccccddddddddddeeeeeeeeee"
                         + "aaaaaaaaaabbbbbbbbbbccccccccccddddddddddeeeeeeeeeeaaaaaaaaaabbbbbbbbbbccccccccccddddddddddeeeeeeeeee"
-                        + "aaaaaaaaaabbbbbbbbbbccccccccccddddddddddeeeeeeeeee')");
+                        + "aaaaaaaaaabbbbbbbbbbccccccccccddddddddddeeeeeeeeee'"
+                        : "set password for 'wl6134user'@'%' = PASSWORD('aaaaaaaaaabbbbbbbbbbccccccccccddddddddddeeeeeeeeee"
+                                + "aaaaaaaaaabbbbbbbbbbccccccccccddddddddddeeeeeeeeeeaaaaaaaaaabbbbbbbbbbccccccccccddddddddddeeeeeeeeee"
+                                + "aaaaaaaaaabbbbbbbbbbccccccccccddddddddddeeeeeeeeeeaaaaaaaaaabbbbbbbbbbccccccccccddddddddddeeeeeeeeee"
+                                + "aaaaaaaaaabbbbbbbbbbccccccccccddddddddddeeeeeeeeee')");
                 s1.executeUpdate("flush privileges");
 
                 props.setProperty("user", "wl6134user");
@@ -6446,11 +6467,14 @@ public class ConnectionRegressionTest extends BaseTestCase {
                 st.executeUpdate("grant all on *.* to 'bug18869381user1'@'%' identified WITH sha256_password");
                 st.executeUpdate("grant all on *.* to 'bug18869381user2'@'%' identified WITH sha256_password");
                 st.executeUpdate("grant all on *.* to 'bug18869381user3'@'%' identified WITH mysql_native_password");
-                st.executeUpdate("set password for 'bug18869381user3'@'%' = PASSWORD('pwd3')");
+                st.executeUpdate(versionMeetsMinimum(5, 7, 6) ? "ALTER USER 'bug18869381user3'@'%' IDENTIFIED BY 'pwd3'"
+                        : "set password for 'bug18869381user3'@'%' = PASSWORD('pwd3')");
                 st.executeUpdate("SET GLOBAL old_passwords= 2");
                 st.executeUpdate("SET SESSION old_passwords= 2");
-                st.executeUpdate("set password for 'bug18869381user1'@'%' = PASSWORD('pwd1')");
-                st.executeUpdate("set password for 'bug18869381user2'@'%' = PASSWORD('pwd2')");
+                st.executeUpdate(versionMeetsMinimum(5, 7, 6) ? "ALTER USER 'bug18869381user1'@'%' IDENTIFIED BY 'pwd1'"
+                        : "set password for 'bug18869381user1'@'%' = PASSWORD('pwd1')");
+                st.executeUpdate(versionMeetsMinimum(5, 7, 6) ? "ALTER USER 'bug18869381user2'@'%' IDENTIFIED BY 'pwd2'"
+                        : "set password for 'bug18869381user2'@'%' = PASSWORD('pwd2')");
                 st.executeUpdate("flush privileges");
 
                 props.setProperty("defaultAuthenticationPlugin", "com.mysql.jdbc.authentication.MysqlNativePasswordPlugin");
@@ -6976,7 +7000,8 @@ public class ConnectionRegressionTest extends BaseTestCase {
         if (versionMeetsMinimum(5, 5, 7)) {
             Connection con = null;
             this.stmt.executeUpdate("grant all on *.* to 'bug19354014user'@'%' identified WITH mysql_native_password");
-            this.stmt.executeUpdate("set password for 'bug19354014user'@'%' = PASSWORD('pwd')");
+            this.stmt.executeUpdate(versionMeetsMinimum(5, 7, 6) ? "ALTER USER 'bug19354014user'@'%' IDENTIFIED BY 'pwd'"
+                    : "set password for 'bug19354014user'@'%' = PASSWORD('pwd')");
             this.stmt.executeUpdate("flush privileges");
 
             try {
@@ -6994,5 +7019,506 @@ public class ConnectionRegressionTest extends BaseTestCase {
                 }
             }
         }
+    }
+
+    /**
+     * Tests fix for Bug#75168 - loadBalanceExceptionChecker interface cannot work using JDBC4/JDK7
+     * 
+     * Bug observed only with JDBC4 classes. This test is a duplication of testsuite.regression.jdbc4.ConnectionRegressionTest#testBug75168().
+     * The two nested static classes, Bug75168LoadBalanceExceptionChecker and Bug75168StatementInterceptor are shared between the two tests.
+     * 
+     * @throws Exception
+     */
+    public void testBug75168() throws Exception {
+        final Properties props = new Properties();
+        props.setProperty("loadBalanceExceptionChecker", "testsuite.regression.ConnectionRegressionTest$Bug75168LoadBalanceExceptionChecker");
+        props.setProperty("statementInterceptors", "testsuite.regression.ConnectionRegressionTest$Bug75168StatementInterceptor");
+
+        Connection connTest = getLoadBalancedConnection(2, null, props); // get a load balancing connection with two default servers
+        for (int i = 0; i < 3; i++) {
+            Statement stmtTest = null;
+            try {
+                stmtTest = connTest.createStatement();
+                stmtTest.execute("SELECT * FROM nonexistent_table");
+                fail("'Table doesn't exist' exception was expected.");
+            } catch (SQLException e) {
+                assertTrue("'Table doesn't exist' exception was expected.", e.getMessage().endsWith("nonexistent_table' doesn't exist"));
+            } finally {
+                if (stmtTest != null) {
+                    stmtTest.close();
+                }
+            }
+        }
+        connTest.close();
+
+        boolean stop = false;
+        do {
+            connTest = getLoadBalancedConnection(2, null, props); // get a load balancing connection with two default servers
+            for (int i = 0; i < 3; i++) {
+                PreparedStatement pstmtTest = null;
+                try {
+                    pstmtTest = connTest.prepareStatement("SELECT * FROM nonexistent_table");
+                    pstmtTest.execute();
+                    fail("'Table doesn't exist' exception was expected.");
+                } catch (SQLException e) {
+                    assertTrue("'Table doesn't exist' exception was expected.", e.getMessage().endsWith("nonexistent_table' doesn't exist"));
+                } finally {
+                    if (pstmtTest != null) {
+                        pstmtTest.close();
+                    }
+                }
+            }
+            connTest.close();
+
+            // do it again with server prepared statements
+            props.setProperty("useServerPrepStmts", "true");
+        } while (stop = !stop);
+    }
+
+    public static class Bug75168LoadBalanceExceptionChecker implements LoadBalanceExceptionChecker {
+        public void init(com.mysql.jdbc.Connection conn, Properties props) throws SQLException {
+        }
+
+        public void destroy() {
+        }
+
+        public boolean shouldExceptionTriggerFailover(SQLException ex) {
+            return ex.getMessage().endsWith("nonexistent_table' doesn't exist");
+        }
+    }
+
+    public static class Bug75168StatementInterceptor implements StatementInterceptorV2 {
+        static Connection previousConnection = null;
+
+        public void init(com.mysql.jdbc.Connection conn, Properties props) throws SQLException {
+        }
+
+        public void destroy() {
+            if (previousConnection == null) {
+                fail("Test testBug75168 didn't run as expected.");
+            }
+        }
+
+        public boolean executeTopLevelOnly() {
+            return false;
+        }
+
+        public ResultSetInternalMethods preProcess(String sql, com.mysql.jdbc.Statement interceptedStatement, com.mysql.jdbc.Connection connection)
+                throws SQLException {
+            if (sql == null) {
+                sql = "";
+            }
+            if (sql.length() == 0 && interceptedStatement instanceof com.mysql.jdbc.PreparedStatement) {
+                sql = ((com.mysql.jdbc.PreparedStatement) interceptedStatement).asSql();
+            }
+            if (sql.indexOf("nonexistent_table") >= 0) {
+                assertTrue("Different connection expected.", !connection.equals(previousConnection));
+                previousConnection = connection;
+            }
+            return null;
+        }
+
+        public ResultSetInternalMethods postProcess(String sql, com.mysql.jdbc.Statement interceptedStatement, ResultSetInternalMethods originalResultSet,
+                com.mysql.jdbc.Connection connection, int warningCount, boolean noIndexUsed, boolean noGoodIndexUsed, SQLException statementException)
+                throws SQLException {
+            return originalResultSet;
+        }
+    }
+
+    /**
+     * Tests fix for BUG#71084 - Wrong java.sql.Date stored if client and server time zones differ
+     * 
+     * This tests the behavior of the new connection property 'noTimezoneConversionForDateType'
+     * 
+     * @throws Exception
+     *             if the test fails.
+     */
+    public void testBug71084() throws Exception {
+        createTable("testBug71084", "(id INT, dt DATE)");
+
+        Properties connProps = new Properties();
+        connProps.setProperty("cacheDefaultTimezone", "false");
+
+        /*
+         * case 0: default settings (no conversions)
+         */
+        testBug71084AssertCase(connProps, "GMT+2", "GMT+6", null, "1998-05-21", "1998-05-21", "1998-05-21 0:00:00");
+        testBug71084AssertCase(connProps, "GMT-6", "GMT+2", null, "1998-05-21", "1998-05-21", "1998-05-21 0:00:00");
+
+        /*
+         * case 1: connection property 'useLegacyDatetimeCode=false'
+         */
+        connProps.setProperty("useLegacyDatetimeCode", "false");
+
+        // client 25 hours behind server
+        testBug71084AssertCase(connProps, "GMT-13", "GMT+12", null, "1998-05-21 22:59:59", "1998-05-22", "1998-05-20 23:00:00");
+        testBug71084AssertCase(connProps, "GMT-13", "GMT+12", null, "1998-05-21 23:00:00", "1998-05-23", "1998-05-21 23:00:00");
+        testBug71084AssertCase(connProps, "GMT-13", "GMT+12", null, "1998-05-22 22:59:59", "1998-05-23", "1998-05-21 23:00:00");
+        testBug71084AssertCase(connProps, "GMT-13", "GMT+12", null, "1998-05-22 23:00:00", "1998-05-24", "1998-05-22 23:00:00");
+        // client 25 hours behind server, 24 hours behind target calendar
+        testBug71084AssertCase(connProps, "GMT-13", "GMT+12", "GMT+11", "1998-05-20 23:59:59", "1998-05-21", "1998-05-20 0:00:00");
+        testBug71084AssertCase(connProps, "GMT-13", "GMT+12", "GMT+11", "1998-05-21 0:00:00", "1998-05-22", "1998-05-21 0:00:00");
+        testBug71084AssertCase(connProps, "GMT-13", "GMT+12", "GMT+11", "1998-05-21 23:59:59", "1998-05-22", "1998-05-21 0:00:00");
+        testBug71084AssertCase(connProps, "GMT-13", "GMT+12", "GMT+11", "1998-05-22 0:00:00", "1998-05-23", "1998-05-22 0:00:00");
+
+        // client 24 hours behind server
+        testBug71084AssertCase(connProps, "GMT-10", "GMT+14", null, "1998-05-20 23:59:59", "1998-05-21", "1998-05-20 0:00:00");
+        testBug71084AssertCase(connProps, "GMT-10", "GMT+14", null, "1998-05-21 0:00:00", "1998-05-22", "1998-05-21 0:00:00");
+        testBug71084AssertCase(connProps, "GMT-10", "GMT+14", null, "1998-05-21 23:59:59", "1998-05-22", "1998-05-21 0:00:00");
+        testBug71084AssertCase(connProps, "GMT-10", "GMT+14", null, "1998-05-22 0:00:00", "1998-05-23", "1998-05-22 0:00:00");
+        // client 24 hours behind server, 25 hours behind target calendar
+        testBug71084AssertCase(connProps, "GMT-10", "GMT+14", "GMT+15", "1998-05-21 22:59:59", "1998-05-22", "1998-05-20 23:00:00");
+        testBug71084AssertCase(connProps, "GMT-10", "GMT+14", "GMT+15", "1998-05-21 23:00:00", "1998-05-23", "1998-05-21 23:00:00");
+        testBug71084AssertCase(connProps, "GMT-10", "GMT+14", "GMT+15", "1998-05-22 22:59:59", "1998-05-23", "1998-05-21 23:00:00");
+        testBug71084AssertCase(connProps, "GMT-10", "GMT+14", "GMT+15", "1998-05-22 23:00:00", "1998-05-24", "1998-05-22 23:00:00");
+
+        // client 2 hours behind server
+        testBug71084AssertCase(connProps, "GMT+8", "GMT+10", null, "1998-05-21 21:59:59", "1998-05-21", "1998-05-20 22:00:00");
+        testBug71084AssertCase(connProps, "GMT+8", "GMT+10", null, "1998-05-21 22:00:00", "1998-05-22", "1998-05-21 22:00:00");
+        testBug71084AssertCase(connProps, "GMT+8", "GMT+10", null, "1998-05-22 21:59:59", "1998-05-22", "1998-05-21 22:00:00");
+        testBug71084AssertCase(connProps, "GMT+8", "GMT+10", null, "1998-05-22 22:00:00", "1998-05-23", "1998-05-22 22:00:00");
+        // client 2 hours behind server, 2 hours ahead of target calendar
+        testBug71084AssertCase(connProps, "GMT+8", "GMT+10", "GMT+6", "1998-05-21 1:59:59", "1998-05-20", "1998-05-20 2:00:00");
+        testBug71084AssertCase(connProps, "GMT+8", "GMT+10", "GMT+6", "1998-05-21 2:00:00", "1998-05-21", "1998-05-21 2:00:00");
+        testBug71084AssertCase(connProps, "GMT+8", "GMT+10", "GMT+6", "1998-05-22 1:59:59", "1998-05-21", "1998-05-21 2:00:00");
+        testBug71084AssertCase(connProps, "GMT+8", "GMT+10", "GMT+6", "1998-05-22 2:00:00", "1998-05-22", "1998-05-22 2:00:00");
+
+        // client and server in the same time zone
+        testBug71084AssertCase(connProps, "GMT+7", "GMT+7", null, "1998-05-20 23:59:59", "1998-05-20", "1998-05-20 0:00:00");
+        testBug71084AssertCase(connProps, "GMT+7", "GMT+7", null, "1998-05-21 0:00:00", "1998-05-21", "1998-05-21 0:00:00");
+        testBug71084AssertCase(connProps, "GMT+7", "GMT+7", null, "1998-05-21 23:59:59", "1998-05-21", "1998-05-21 0:00:00");
+        testBug71084AssertCase(connProps, "GMT+7", "GMT+7", null, "1998-05-22 0:00:00", "1998-05-22", "1998-05-22 0:00:00");
+        // client, server and target calendar in the same time zone
+        testBug71084AssertCase(connProps, "GMT+7", "GMT+7", "GMT+7", "1998-05-20 23:59:59", "1998-05-20", "1998-05-20 0:00:00");
+        testBug71084AssertCase(connProps, "GMT+7", "GMT+7", "GMT+7", "1998-05-21 0:00:00", "1998-05-21", "1998-05-21 0:00:00");
+        testBug71084AssertCase(connProps, "GMT+7", "GMT+7", "GMT+7", "1998-05-21 23:59:59", "1998-05-21", "1998-05-21 0:00:00");
+        testBug71084AssertCase(connProps, "GMT+7", "GMT+7", "GMT+7", "1998-05-22 0:00:00", "1998-05-22", "1998-05-22 0:00:00");
+
+        // client 2 hours ahead of server
+        testBug71084AssertCase(connProps, "GMT-9", "GMT-11", null, "1998-05-21 1:59:59", "1998-05-20", "1998-05-20 2:00:00");
+        testBug71084AssertCase(connProps, "GMT-9", "GMT-11", null, "1998-05-21 2:00:00", "1998-05-21", "1998-05-21 2:00:00");
+        testBug71084AssertCase(connProps, "GMT-9", "GMT-11", null, "1998-05-22 1:59:59", "1998-05-21", "1998-05-21 2:00:00");
+        testBug71084AssertCase(connProps, "GMT-9", "GMT-11", null, "1998-05-22 2:00:00", "1998-05-22", "1998-05-22 2:00:00");
+        // client 2 hours ahead of server, 2 hours behind target calendar
+        testBug71084AssertCase(connProps, "GMT-9", "GMT-11", "GMT-7", "1998-05-21 21:59:59", "1998-05-21", "1998-05-20 22:00:00");
+        testBug71084AssertCase(connProps, "GMT-9", "GMT-11", "GMT-7", "1998-05-21 22:00:00", "1998-05-22", "1998-05-21 22:00:00");
+        testBug71084AssertCase(connProps, "GMT-9", "GMT-11", "GMT-7", "1998-05-22 21:59:59", "1998-05-22", "1998-05-21 22:00:00");
+        testBug71084AssertCase(connProps, "GMT-9", "GMT-11", "GMT-7", "1998-05-22 22:00:00", "1998-05-23", "1998-05-22 22:00:00");
+
+        // client 24 hours ahead of server
+        testBug71084AssertCase(connProps, "GMT+12", "GMT-12", null, "1998-05-20 23:59:59", "1998-05-19", "1998-05-20 0:00:00");
+        testBug71084AssertCase(connProps, "GMT+12", "GMT-12", null, "1998-05-21 0:00:00", "1998-05-20", "1998-05-21 0:00:00");
+        testBug71084AssertCase(connProps, "GMT+12", "GMT-12", null, "1998-05-21 23:59:59", "1998-05-20", "1998-05-21 0:00:00");
+        testBug71084AssertCase(connProps, "GMT+12", "GMT-12", null, "1998-05-22 0:00:00", "1998-05-21", "1998-05-22 0:00:00");
+        // client 24 hours ahead of server, 25 hours ahead of target calendar
+        testBug71084AssertCase(connProps, "GMT+12", "GMT-12", "GMT-13", "1998-05-21 0:59:59", "1998-05-19", "1998-05-20 1:00:00");
+        testBug71084AssertCase(connProps, "GMT+12", "GMT-12", "GMT-13", "1998-05-21 1:00:00", "1998-05-20", "1998-05-21 1:00:00");
+        testBug71084AssertCase(connProps, "GMT+12", "GMT-12", "GMT-13", "1998-05-22 0:59:59", "1998-05-20", "1998-05-21 1:00:00");
+        testBug71084AssertCase(connProps, "GMT+12", "GMT-12", "GMT-13", "1998-05-22 1:00:00", "1998-05-21", "1998-05-22 1:00:00");
+
+        // client 25 hours ahead of server
+        testBug71084AssertCase(connProps, "GMT+13", "GMT-12", null, "1998-05-21 0:59:59", "1998-05-19", "1998-05-20 1:00:00");
+        testBug71084AssertCase(connProps, "GMT+13", "GMT-12", null, "1998-05-21 1:00:00", "1998-05-20", "1998-05-21 1:00:00");
+        testBug71084AssertCase(connProps, "GMT+13", "GMT-12", null, "1998-05-22 0:59:59", "1998-05-20", "1998-05-21 1:00:00");
+        testBug71084AssertCase(connProps, "GMT+13", "GMT-12", null, "1998-05-22 1:00:00", "1998-05-21", "1998-05-22 1:00:00");
+        // client 25 hours ahead of server, 24 hours ahead of target calendar
+        testBug71084AssertCase(connProps, "GMT+13", "GMT-12", "GMT-11", "1998-05-20 23:59:59", "1998-05-19", "1998-05-20 0:00:00");
+        testBug71084AssertCase(connProps, "GMT+13", "GMT-12", "GMT-11", "1998-05-21 0:00:00", "1998-05-20", "1998-05-21 0:00:00");
+        testBug71084AssertCase(connProps, "GMT+13", "GMT-12", "GMT-11", "1998-05-21 23:59:59", "1998-05-20", "1998-05-21 0:00:00");
+        testBug71084AssertCase(connProps, "GMT+13", "GMT-12", "GMT-11", "1998-05-22 0:00:00", "1998-05-21", "1998-05-22 0:00:00");
+        connProps.remove("useLegacyDatetimeCode");
+
+        /*
+         * case 2: connection property 'useTimezone=true'
+         */
+        connProps.setProperty("useTimezone", "true");
+
+        // client 25 hours behind server
+        testBug71084AssertCase(connProps, "GMT-13", "GMT+12", null, "1998-05-20 23:59:59", "1998-05-20", "1998-05-20 0:00:00");
+        testBug71084AssertCase(connProps, "GMT-13", "GMT+12", null, "1998-05-21 0:00:00", "1998-05-21", "1998-05-21 0:00:00");
+        testBug71084AssertCase(connProps, "GMT-13", "GMT+12", null, "1998-05-21 23:59:59", "1998-05-21", "1998-05-21 0:00:00");
+        testBug71084AssertCase(connProps, "GMT-13", "GMT+12", null, "1998-05-22 0:00:00", "1998-05-22", "1998-05-22 0:00:00");
+        // client 25 hours behind server, 24 hours behind target calendar
+        testBug71084AssertCase(connProps, "GMT-13", "GMT+12", "GMT+11", "1998-05-20 23:59:59", "1998-05-21", "1998-05-20 0:00:00");
+        testBug71084AssertCase(connProps, "GMT-13", "GMT+12", "GMT+11", "1998-05-21 0:00:00", "1998-05-22", "1998-05-21 0:00:00");
+        testBug71084AssertCase(connProps, "GMT-13", "GMT+12", "GMT+11", "1998-05-21 23:59:59", "1998-05-22", "1998-05-21 0:00:00");
+        testBug71084AssertCase(connProps, "GMT-13", "GMT+12", "GMT+11", "1998-05-22 0:00:00", "1998-05-23", "1998-05-22 0:00:00");
+
+        // client 24 hours behind server
+        testBug71084AssertCase(connProps, "GMT-10", "GMT+14", null, "1998-05-20 23:59:59", "1998-05-20", "1998-05-20 0:00:00");
+        testBug71084AssertCase(connProps, "GMT-10", "GMT+14", null, "1998-05-21 0:00:00", "1998-05-21", "1998-05-21 0:00:00");
+        testBug71084AssertCase(connProps, "GMT-10", "GMT+14", null, "1998-05-21 23:59:59", "1998-05-21", "1998-05-21 0:00:00");
+        testBug71084AssertCase(connProps, "GMT-10", "GMT+14", null, "1998-05-22 0:00:00", "1998-05-22", "1998-05-22 0:00:00");
+        // client 24 hours behind server, 25 hours behind target calendar
+        testBug71084AssertCase(connProps, "GMT-10", "GMT+14", "GMT+15", "1998-05-21 22:59:59", "1998-05-22", "1998-05-20 23:00:00");
+        testBug71084AssertCase(connProps, "GMT-10", "GMT+14", "GMT+15", "1998-05-21 23:00:00", "1998-05-23", "1998-05-21 23:00:00");
+        testBug71084AssertCase(connProps, "GMT-10", "GMT+14", "GMT+15", "1998-05-22 22:59:59", "1998-05-23", "1998-05-21 23:00:00");
+        testBug71084AssertCase(connProps, "GMT-10", "GMT+14", "GMT+15", "1998-05-22 23:00:00", "1998-05-24", "1998-05-22 23:00:00");
+
+        // client 2 hours behind server
+        testBug71084AssertCase(connProps, "GMT+8", "GMT+10", null, "1998-05-20 23:59:59", "1998-05-20", "1998-05-20 0:00:00");
+        testBug71084AssertCase(connProps, "GMT+8", "GMT+10", null, "1998-05-21 0:00:00", "1998-05-21", "1998-05-21 0:00:00");
+        testBug71084AssertCase(connProps, "GMT+8", "GMT+10", null, "1998-05-21 23:59:59", "1998-05-21", "1998-05-21 0:00:00");
+        testBug71084AssertCase(connProps, "GMT+8", "GMT+10", null, "1998-05-22 0:00:00", "1998-05-22", "1998-05-22 0:00:00");
+        // client 2 hours behind server, 2 hours ahead of target calendar
+        testBug71084AssertCase(connProps, "GMT+8", "GMT+10", "GMT+6", "1998-05-21 1:59:59", "1998-05-20", "1998-05-20 2:00:00");
+        testBug71084AssertCase(connProps, "GMT+8", "GMT+10", "GMT+6", "1998-05-21 2:00:00", "1998-05-21", "1998-05-21 2:00:00");
+        testBug71084AssertCase(connProps, "GMT+8", "GMT+10", "GMT+6", "1998-05-22 1:59:59", "1998-05-21", "1998-05-21 2:00:00");
+        testBug71084AssertCase(connProps, "GMT+8", "GMT+10", "GMT+6", "1998-05-22 2:00:00", "1998-05-22", "1998-05-22 2:00:00");
+
+        // client and server in the same time zone
+        testBug71084AssertCase(connProps, "GMT+7", "GMT+7", null, "1998-05-20 23:59:59", "1998-05-20", "1998-05-20 0:00:00");
+        testBug71084AssertCase(connProps, "GMT+7", "GMT+7", null, "1998-05-21 0:00:00", "1998-05-21", "1998-05-21 0:00:00");
+        testBug71084AssertCase(connProps, "GMT+7", "GMT+7", null, "1998-05-21 23:59:59", "1998-05-21", "1998-05-21 0:00:00");
+        testBug71084AssertCase(connProps, "GMT+7", "GMT+7", null, "1998-05-22 0:00:00", "1998-05-22", "1998-05-22 0:00:00");
+        // client, server and target calendar in the same time zone
+        testBug71084AssertCase(connProps, "GMT+7", "GMT+7", "GMT+7", "1998-05-20 23:59:59", "1998-05-20", "1998-05-20 0:00:00");
+        testBug71084AssertCase(connProps, "GMT+7", "GMT+7", "GMT+7", "1998-05-21 0:00:00", "1998-05-21", "1998-05-21 0:00:00");
+        testBug71084AssertCase(connProps, "GMT+7", "GMT+7", "GMT+7", "1998-05-21 23:59:59", "1998-05-21", "1998-05-21 0:00:00");
+        testBug71084AssertCase(connProps, "GMT+7", "GMT+7", "GMT+7", "1998-05-22 0:00:00", "1998-05-22", "1998-05-22 0:00:00");
+
+        // client 2 hours ahead of server
+        testBug71084AssertCase(connProps, "GMT-9", "GMT-11", null, "1998-05-20 23:59:59", "1998-05-20", "1998-05-20 0:00:00");
+        testBug71084AssertCase(connProps, "GMT-9", "GMT-11", null, "1998-05-21 0:00:00", "1998-05-21", "1998-05-21 0:00:00");
+        testBug71084AssertCase(connProps, "GMT-9", "GMT-11", null, "1998-05-21 23:59:59", "1998-05-21", "1998-05-21 0:00:00");
+        testBug71084AssertCase(connProps, "GMT-9", "GMT-11", null, "1998-05-22 0:00:00", "1998-05-22", "1998-05-22 0:00:00");
+        // client 2 hours ahead of server, 2 hours behind target calendar
+        testBug71084AssertCase(connProps, "GMT-9", "GMT-11", "GMT-7", "1998-05-21 21:59:59", "1998-05-21", "1998-05-20 22:00:00");
+        testBug71084AssertCase(connProps, "GMT-9", "GMT-11", "GMT-7", "1998-05-21 22:00:00", "1998-05-22", "1998-05-21 22:00:00");
+        testBug71084AssertCase(connProps, "GMT-9", "GMT-11", "GMT-7", "1998-05-22 21:59:59", "1998-05-22", "1998-05-21 22:00:00");
+        testBug71084AssertCase(connProps, "GMT-9", "GMT-11", "GMT-7", "1998-05-22 22:00:00", "1998-05-23", "1998-05-22 22:00:00");
+
+        // client 24 hours ahead of server
+        testBug71084AssertCase(connProps, "GMT+12", "GMT-12", null, "1998-05-20 23:59:59", "1998-05-20", "1998-05-20 0:00:00");
+        testBug71084AssertCase(connProps, "GMT+12", "GMT-12", null, "1998-05-21 0:00:00", "1998-05-21", "1998-05-21 0:00:00");
+        testBug71084AssertCase(connProps, "GMT+12", "GMT-12", null, "1998-05-21 23:59:59", "1998-05-21", "1998-05-21 0:00:00");
+        testBug71084AssertCase(connProps, "GMT+12", "GMT-12", null, "1998-05-22 0:00:00", "1998-05-22", "1998-05-22 0:00:00");
+        // client 24 hours ahead of server, 25 hours ahead of target calendar
+        testBug71084AssertCase(connProps, "GMT+12", "GMT-12", "GMT-13", "1998-05-21 0:59:59", "1998-05-19", "1998-05-20 1:00:00");
+        testBug71084AssertCase(connProps, "GMT+12", "GMT-12", "GMT-13", "1998-05-21 1:00:00", "1998-05-20", "1998-05-21 1:00:00");
+        testBug71084AssertCase(connProps, "GMT+12", "GMT-12", "GMT-13", "1998-05-22 0:59:59", "1998-05-20", "1998-05-21 1:00:00");
+        testBug71084AssertCase(connProps, "GMT+12", "GMT-12", "GMT-13", "1998-05-22 1:00:00", "1998-05-21", "1998-05-22 1:00:00");
+
+        // client 25 hours ahead of server
+        testBug71084AssertCase(connProps, "GMT+13", "GMT-12", null, "1998-05-20 23:59:59", "1998-05-20", "1998-05-20 0:00:00");
+        testBug71084AssertCase(connProps, "GMT+13", "GMT-12", null, "1998-05-21 0:00:00", "1998-05-21", "1998-05-21 0:00:00");
+        testBug71084AssertCase(connProps, "GMT+13", "GMT-12", null, "1998-05-21 23:59:59", "1998-05-21", "1998-05-21 0:00:00");
+        testBug71084AssertCase(connProps, "GMT+13", "GMT-12", null, "1998-05-22 0:00:00", "1998-05-22", "1998-05-22 0:00:00");
+        // client 25 hours ahead of server, 24 hours ahead of target calendar
+        testBug71084AssertCase(connProps, "GMT+13", "GMT-12", "GMT-11", "1998-05-20 23:59:59", "1998-05-19", "1998-05-20 0:00:00");
+        testBug71084AssertCase(connProps, "GMT+13", "GMT-12", "GMT-11", "1998-05-21 0:00:00", "1998-05-20", "1998-05-21 0:00:00");
+        testBug71084AssertCase(connProps, "GMT+13", "GMT-12", "GMT-11", "1998-05-21 23:59:59", "1998-05-20", "1998-05-21 0:00:00");
+        testBug71084AssertCase(connProps, "GMT+13", "GMT-12", "GMT-11", "1998-05-22 0:00:00", "1998-05-21", "1998-05-22 0:00:00");
+        connProps.remove("useTimezone");
+    }
+
+    private void testBug71084AssertCase(Properties connProps, String clientTZ, String serverTZ, String targetTZ, String insertDate, String expectedStoredDate,
+            String expectedRetrievedDate) throws Exception {
+        final TimeZone defaultTZ = TimeZone.getDefault();
+        final boolean useTargetCal = targetTZ != null;
+        final Properties testExtraProperties = new Properties();
+
+        testExtraProperties.setProperty("", "");
+        testExtraProperties.setProperty("useFastDateParsing", "false");
+        testExtraProperties.setProperty("useJDBCCompliantTimezoneShift", "true");
+        testExtraProperties.setProperty("useSSPSCompatibleTimezoneShift", "true");
+
+        this.stmt.execute("DELETE FROM testBug71084");
+
+        try {
+            TimeZone.setDefault(TimeZone.getTimeZone(clientTZ));
+
+            SimpleDateFormat longDateFrmt = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+            longDateFrmt.setTimeZone(TimeZone.getDefault());
+            SimpleDateFormat shortDateFrmt = new SimpleDateFormat("yyyy-MM-dd");
+            shortDateFrmt.setTimeZone(TimeZone.getDefault());
+
+            Calendar targetCal = null;
+            String targetCalMsg = null;
+            if (useTargetCal) {
+                targetCal = Calendar.getInstance(TimeZone.getTimeZone(targetTZ));
+                targetCalMsg = " (Calendar methods)";
+            } else {
+                targetCalMsg = " (non-Calendar methods)";
+            }
+
+            Date dateIn = insertDate.length() == 10 ? shortDateFrmt.parse(insertDate) : longDateFrmt.parse(insertDate);
+            String expectedDateInDB = expectedStoredDate;
+            Date expectedDateInRS = longDateFrmt.parse(expectedRetrievedDate);
+            String expectedDateInDBNoConv = shortDateFrmt.format(dateIn);
+            Date expectedDateInRSNoConv = shortDateFrmt.parse(expectedDateInDBNoConv);
+
+            int id = 0;
+            for (Entry<Object, Object> prop : testExtraProperties.entrySet()) {
+                id++;
+
+                String key = (String) prop.getKey();
+                String value = (String) prop.getValue();
+                Properties connPropsLocal = new Properties();
+                String propsList = "...";
+
+                connPropsLocal.putAll(connProps);
+                if (key.length() > 0) {
+                    connPropsLocal.setProperty(key, value);
+                }
+                for (Object k : connPropsLocal.keySet()) {
+                    if (!"cacheDefaultTimezone".equalsIgnoreCase((String) k)) {
+                        propsList += "," + (String) k;
+                    }
+                }
+
+                connPropsLocal.setProperty("serverTimezone", serverTZ);
+
+                /*
+                 * Test using the property "noTimezoneConversionForDateType=false". Conversions should occur.
+                 */
+                connPropsLocal.setProperty("noTimezoneConversionForDateType", "false");
+                Connection testConn = getConnectionWithProps(connPropsLocal);
+
+                PreparedStatement testPstmt = testConn.prepareStatement("INSERT INTO testBug71084 VALUES (?, ?)");
+                testPstmt.setInt(1, id);
+                if (useTargetCal) {
+                    testPstmt.setDate(2, new java.sql.Date(dateIn.getTime()), targetCal);
+                } else {
+                    testPstmt.setDate(2, new java.sql.Date(dateIn.getTime()));
+                }
+                testPstmt.execute();
+                testPstmt.close();
+
+                Statement testStmt = testConn.createStatement();
+                // Get date value from database: Column `dt` - allowing time zone conversion by returning it as is; Column `dtStr` - preventing time zone
+                // conversion by returning it as String and invalidating the date format so that no automatic conversion can ever happen.
+                ResultSet restRs = testStmt.executeQuery("SELECT dt, CONCAT('$', dt) AS dtStr FROM testBug71084 WHERE id = " + id);
+                restRs.next();
+                java.sql.Date dateOut = useTargetCal ? restRs.getDate(1, targetCal) : restRs.getDate(1);
+                String dateInDB = restRs.getString(2).substring(1);
+                restRs.close();
+                testStmt.close();
+
+                testConn.close();
+
+                assertEquals(id + ". [" + propsList + "] Date stored" + targetCalMsg, expectedDateInDB, dateInDB);
+                assertEquals(id + ". [" + propsList + "] Date retrieved" + targetCalMsg, longDateFrmt.format(expectedDateInRS), longDateFrmt.format(dateOut));
+
+                /*
+                 * Repeat the test using the property "noTimezoneConversionForDateType=true". No conversions should occur now.
+                 */
+                id++;
+
+                propsList += ",noTimezoneConversionForDateType";
+
+                connPropsLocal.setProperty("noTimezoneConversionForDateType", "true");
+                testConn = getConnectionWithProps(connPropsLocal);
+
+                testPstmt = testConn.prepareStatement("INSERT INTO testBug71084 VALUES (?, ?)");
+                testPstmt.setInt(1, id);
+                if (useTargetCal) {
+                    testPstmt.setDate(2, new java.sql.Date(dateIn.getTime()), targetCal);
+                } else {
+                    testPstmt.setDate(2, new java.sql.Date(dateIn.getTime()));
+                }
+                testPstmt.execute();
+                testPstmt.close();
+
+                testStmt = testConn.createStatement();
+                // Get date value from database: Column `dt` - allowing time zone conversion by returning it as is; Column `dtStr` - preventing time zone
+                // conversion by returning it as String and invalidating the date format so that no automatic conversion can ever happen.
+                restRs = testStmt.executeQuery("SELECT dt, CONCAT('$', dt) AS dtStr FROM testBug71084 WHERE id = " + id);
+                restRs.next();
+                dateOut = useTargetCal ? restRs.getDate(1, targetCal) : restRs.getDate(1);
+                dateInDB = restRs.getString(2).substring(1);
+                restRs.close();
+                testStmt.close();
+
+                testConn.close();
+
+                if (useTargetCal) {
+                    assertEquals(id + ". [" + propsList + "] Date stored" + targetCalMsg, expectedDateInDB, dateInDB);
+                    assertEquals(id + ". [" + propsList + "] Date retrieved" + targetCalMsg, longDateFrmt.format(expectedDateInRS),
+                            longDateFrmt.format(dateOut));
+                } else {
+                    assertEquals(id + ". [" + propsList + "] Date stored" + targetCalMsg, expectedDateInDBNoConv, dateInDB);
+                    assertEquals(id + ". [" + propsList + "] Date retrieved" + targetCalMsg, longDateFrmt.format(expectedDateInRSNoConv),
+                            longDateFrmt.format(dateOut));
+                }
+            }
+        } finally {
+            TimeZone.setDefault(defaultTZ);
+        }
+    }
+
+    /**
+     * Tests fix for BUG#20685022 - SSL CONNECTION TO MYSQL 5.7.6 COMMUNITY SERVER FAILS
+     * 
+     * This test is duplicated in testuite.regression.ConnectionRegressionTest.jdbc4.testBug20685022().
+     * 
+     * @throws Exception
+     *             if the test fails.
+     */
+    public void testBug20685022() throws Exception {
+        final boolean sslCipherSuitesReqFor576 = Util.getJVMVersion() < 8 && versionMeetsMinimum(5, 7, 6) && isCommunityEdition();
+        final Properties props = new Properties();
+        final Callable<Void> callableInstance = new Callable<Void>() {
+            public Void call() throws Exception {
+                getConnectionWithProps(props);
+                return null;
+            }
+        };
+
+        /*
+         * case 1: non verifying server certificate
+         */
+        props.clear();
+        props.setProperty("useSSL", "true");
+        props.setProperty("requireSSL", "true");
+        props.setProperty("verifyServerCertificate", "false");
+
+        if (sslCipherSuitesReqFor576) {
+            assertThrows(SQLException.class, Messages.getString("CommunicationsException.incompatibleSSLCipherSuites"), callableInstance);
+
+            props.setProperty("enabledSSLCipherSuites", SSL_CIPHERS_FOR_576);
+        }
+        getConnectionWithProps(props);
+
+        /*
+         * case 2: verifying server certificate using key store provided by connection properties
+         */
+        props.clear();
+        props.setProperty("useSSL", "true");
+        props.setProperty("requireSSL", "true");
+        props.setProperty("verifyServerCertificate", "true");
+        props.setProperty("trustCertificateKeyStoreUrl", "file:src/testsuite/ssl-test-certs/test-cert-store");
+        props.setProperty("trustCertificateKeyStoreType", "JKS");
+        props.setProperty("trustCertificateKeyStorePassword", "password");
+
+        if (sslCipherSuitesReqFor576) {
+            assertThrows(SQLException.class, Messages.getString("CommunicationsException.incompatibleSSLCipherSuites"), callableInstance);
+
+            props.setProperty("enabledSSLCipherSuites", SSL_CIPHERS_FOR_576);
+        }
+
+        getConnectionWithProps(props);
+
+        /*
+         * case 3: verifying server certificate using key store provided by system properties
+         */
+        props.clear();
+        props.setProperty("useSSL", "true");
+        props.setProperty("requireSSL", "true");
+        props.setProperty("verifyServerCertificate", "true");
+
+        String trustStorePath = "src/testsuite/ssl-test-certs/test-cert-store";
+        System.setProperty("javax.net.ssl.keyStore", trustStorePath);
+        System.setProperty("javax.net.ssl.keyStorePassword", "password");
+        System.setProperty("javax.net.ssl.trustStore", trustStorePath);
+        System.setProperty("javax.net.ssl.trustStorePassword", "password");
+
+        if (sslCipherSuitesReqFor576) {
+            assertThrows(SQLException.class, Messages.getString("CommunicationsException.incompatibleSSLCipherSuites"), callableInstance);
+
+            props.setProperty("enabledSSLCipherSuites", SSL_CIPHERS_FOR_576);
+        }
+
+        getConnectionWithProps(props);
     }
 }

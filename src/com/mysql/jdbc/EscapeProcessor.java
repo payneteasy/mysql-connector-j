@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2002, 2014, Oracle and/or its affiliates. All rights reserved.
+  Copyright (c) 2002, 2015, Oracle and/or its affiliates. All rights reserved.
 
   The MySQL Connector/J is licensed under the terms of the GPLv2
   <http://www.gnu.org/licenses/old-licenses/gpl-2.0.html>, like most MySQL Connectors.
@@ -111,7 +111,7 @@ class EscapeProcessor {
             return sql;
         }
 
-        StringBuffer newSql = new StringBuffer();
+        StringBuilder newSql = new StringBuilder();
 
         EscapeTokenizer escapeTokenizer = new EscapeTokenizer(sql);
 
@@ -132,7 +132,7 @@ class EscapeProcessor {
                         int nestedBrace = token.indexOf('{', 2);
 
                         if (nestedBrace != -1) {
-                            StringBuffer buf = new StringBuffer(token.substring(0, 1));
+                            StringBuilder buf = new StringBuilder(token.substring(0, 1));
 
                             Object remainingResults = escapeSQL(token.substring(1, token.length() - 1), serverSupportsConvertFn, conn);
 
@@ -293,7 +293,7 @@ class EscapeProcessor {
         return epr;
     }
 
-    private static void processTimeToken(MySQLConnection conn, StringBuffer newSql, String token) throws SQLException {
+    private static void processTimeToken(MySQLConnection conn, StringBuilder newSql, String token) throws SQLException {
         int startPos = token.indexOf('\'') + 1;
         int endPos = token.lastIndexOf('\''); // no }
 
@@ -342,21 +342,19 @@ class EscapeProcessor {
                         int minuteInt = Integer.parseInt(minute);
                         int secondInt = Integer.parseInt(second);
 
-                        synchronized (sessionCalendar) {
-                            Time toBeAdjusted = TimeUtil.fastTimeCreate(sessionCalendar, hourInt, minuteInt, secondInt, conn.getExceptionInterceptor());
+                        Time toBeAdjusted = TimeUtil.fastTimeCreate(sessionCalendar, hourInt, minuteInt, secondInt, conn.getExceptionInterceptor());
 
-                            Time inServerTimezone = TimeUtil.changeTimezone(conn, sessionCalendar, null, toBeAdjusted, sessionCalendar.getTimeZone(),
-                                    conn.getServerTimezoneTZ(), false);
+                        Time inServerTimezone = TimeUtil.changeTimezone(conn, sessionCalendar, null, toBeAdjusted, sessionCalendar.getTimeZone(),
+                                conn.getServerTimezoneTZ(), false);
 
-                            newSql.append("'");
-                            newSql.append(inServerTimezone.toString());
+                        newSql.append("'");
+                        newSql.append(inServerTimezone.toString());
 
-                            if (serverSupportsFractionalSecond) {
-                                newSql.append(fractionalSecond);
-                            }
-
-                            newSql.append("'");
+                        if (serverSupportsFractionalSecond) {
+                            newSql.append(fractionalSecond);
                         }
+
+                        newSql.append("'");
 
                     } catch (NumberFormatException nfe) {
                         throw SQLError.createSQLException("Syntax error in TIMESTAMP escape sequence '" + token + "'.", SQLError.SQL_STATE_ILLEGAL_ARGUMENT,
@@ -369,7 +367,7 @@ class EscapeProcessor {
         }
     }
 
-    private static void processTimestampToken(MySQLConnection conn, StringBuffer newSql, String token) throws SQLException {
+    private static void processTimestampToken(MySQLConnection conn, StringBuilder newSql, String token) throws SQLException {
         int startPos = token.indexOf('\'') + 1;
         int endPos = token.lastIndexOf('\''); // no }
 
@@ -447,28 +445,26 @@ class EscapeProcessor {
                                 int minuteInt = Integer.parseInt(minute);
                                 int secondInt = Integer.parseInt(second);
 
-                                synchronized (sessionCalendar) {
-                                    boolean useGmtMillis = conn.getUseGmtMillisForDatetimes();
+                                boolean useGmtMillis = conn.getUseGmtMillisForDatetimes();
 
-                                    Timestamp toBeAdjusted = TimeUtil.fastTimestampCreate(useGmtMillis,
-                                            useGmtMillis ? Calendar.getInstance(TimeZone.getTimeZone("GMT")) : null, sessionCalendar, year4Int, month2Int,
-                                            day2Int, hourInt, minuteInt, secondInt, 0);
+                                Timestamp toBeAdjusted = TimeUtil.fastTimestampCreate(useGmtMillis,
+                                        useGmtMillis ? Calendar.getInstance(TimeZone.getTimeZone("GMT")) : null, sessionCalendar, year4Int, month2Int, day2Int,
+                                        hourInt, minuteInt, secondInt, 0);
 
-                                    Timestamp inServerTimezone = TimeUtil.changeTimezone(conn, sessionCalendar, null, toBeAdjusted,
-                                            sessionCalendar.getTimeZone(), conn.getServerTimezoneTZ(), false);
+                                Timestamp inServerTimezone = TimeUtil.changeTimezone(conn, sessionCalendar, null, toBeAdjusted, sessionCalendar.getTimeZone(),
+                                        conn.getServerTimezoneTZ(), false);
 
-                                    newSql.append("'");
+                                newSql.append("'");
 
-                                    String timezoneLiteral = inServerTimezone.toString();
+                                String timezoneLiteral = inServerTimezone.toString();
 
-                                    int indexOfDot = timezoneLiteral.indexOf(".");
+                                int indexOfDot = timezoneLiteral.indexOf(".");
 
-                                    if (indexOfDot != -1) {
-                                        timezoneLiteral = timezoneLiteral.substring(0, indexOfDot);
-                                    }
-
-                                    newSql.append(timezoneLiteral);
+                                if (indexOfDot != -1) {
+                                    timezoneLiteral = timezoneLiteral.substring(0, indexOfDot);
                                 }
+
+                                newSql.append(timezoneLiteral);
 
                                 if (serverSupportsFractionalSecond) {
                                     newSql.append(fractionalSecond);
@@ -589,14 +585,14 @@ class EscapeProcessor {
         int replaceIndex = newType.indexOf("?");
 
         if (replaceIndex != -1) {
-            StringBuffer convertRewrite = new StringBuffer(newType.substring(0, replaceIndex));
+            StringBuilder convertRewrite = new StringBuilder(newType.substring(0, replaceIndex));
             convertRewrite.append(expression);
             convertRewrite.append(newType.substring(replaceIndex + 1, newType.length()));
 
             return convertRewrite.toString();
         }
 
-        StringBuffer castRewrite = new StringBuffer("CAST(");
+        StringBuilder castRewrite = new StringBuilder("CAST(");
         castRewrite.append(expression);
         castRewrite.append(" AS ");
         castRewrite.append(newType);
@@ -622,7 +618,7 @@ class EscapeProcessor {
 
         int length = toCollapse.length();
 
-        StringBuffer collapsed = new StringBuffer(length);
+        StringBuilder collapsed = new StringBuilder(length);
 
         for (int i = 0; i < length; i++) {
             char c = toCollapse.charAt(i);

@@ -206,7 +206,7 @@ public class MicroPerformanceRegressionTest extends BaseTestCase {
 
                 blockStart = blockEnd;
 
-                StringBuffer messageBuf = new StringBuffer();
+                StringBuilder messageBuf = new StringBuilder();
 
                 messageBuf.append(i + " prepares, the last 1000 prepares took " + totalTime + " ms");
 
@@ -338,6 +338,7 @@ public class MicroPerformanceRegressionTest extends BaseTestCase {
         long start = currentTimeMillis();
 
         for (int j = 0; j < 2000; j++) {
+            // FIXME: StringBuffer below is used for measuring and can't be changed to StringBuilder. We need a better approximation alg here. 
             StringBuffer buf = new StringBuffer(numLoops);
 
             for (int i = 0; i < numLoops; i++) {

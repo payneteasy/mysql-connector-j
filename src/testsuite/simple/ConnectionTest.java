@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2002, 2014, Oracle and/or its affiliates. All rights reserved.
+  Copyright (c) 2002, 2015, Oracle and/or its affiliates. All rights reserved.
 
   The MySQL Connector/J is licensed under the terms of the GPLv2
   <http://www.gnu.org/licenses/old-licenses/gpl-2.0.html>, like most MySQL Connectors.
@@ -46,10 +46,12 @@ import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.sql.Savepoint;
 import java.sql.Statement;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Enumeration;
 import java.util.List;
 import java.util.Properties;
+import java.util.TimeZone;
 
 import testsuite.BaseTestCase;
 
@@ -739,7 +741,7 @@ public class ConnectionTest extends BaseTestCase {
         int count = this.stmt.executeUpdate("DELETE FROM testLocalInfileWithUrl");
         assertTrue(count == 1);
 
-        StringBuffer escapedPath = new StringBuffer();
+        StringBuilder escapedPath = new StringBuilder();
         String path = infile.getCanonicalPath();
 
         for (int i = 0; i < path.length(); i++) {
@@ -805,20 +807,18 @@ public class ConnectionTest extends BaseTestCase {
 
         try {
             // eliminate side-effects when not run in isolation
-            StandardLogger.bufferedLog = new StringBuffer();
+            StandardLogger.startLoggingToBuffer();
 
             Connection conn2 = getConnectionWithProps(props);
 
-            StandardLogger.saveLogsToBuffer();
-
-            assertTrue("Configuration wasn't cached", StandardLogger.bufferedLog.toString().indexOf("SHOW VARIABLES") == -1);
+            assertTrue("Configuration wasn't cached", StandardLogger.getBuffer().toString().indexOf("SHOW VARIABLES") == -1);
 
             if (versionMeetsMinimum(4, 1)) {
-                assertTrue("Configuration wasn't cached", StandardLogger.bufferedLog.toString().indexOf("SHOW COLLATION") == -1);
+                assertTrue("Configuration wasn't cached", StandardLogger.getBuffer().toString().indexOf("SHOW COLLATION") == -1);
 
             }
         } finally {
-            StandardLogger.bufferedLog = null;
+            StandardLogger.dropBuffer();
         }
     }
 
@@ -841,14 +841,13 @@ public class ConnectionTest extends BaseTestCase {
         conn1.setAutoCommit(true);
         conn1.setTransactionIsolation(Connection.TRANSACTION_REPEATABLE_READ);
 
-        StandardLogger.saveLogsToBuffer();
-        StandardLogger.bufferedLog.setLength(0);
+        StandardLogger.startLoggingToBuffer();
 
         conn1.setAutoCommit(true);
         conn1.setTransactionIsolation(Connection.TRANSACTION_REPEATABLE_READ);
         conn1.getTransactionIsolation();
 
-        String logAsString = StandardLogger.bufferedLog.toString();
+        String logAsString = StandardLogger.getBuffer().toString();
 
         assertTrue(logAsString.indexOf("SET SESSION") == -1 && logAsString.indexOf("SHOW VARIABLES LIKE 'tx_isolation'") == -1
                 && logAsString.indexOf("SET autocommit=") == -1);
@@ -948,15 +947,14 @@ public class ConnectionTest extends BaseTestCase {
         props.setProperty("characterEncoding", "UTF-8");
         props.setProperty("logFactory", "com.mysql.jdbc.log.StandardLogger");
         props.setProperty("profileSQL", "true");
-        StandardLogger.saveLogsToBuffer();
-        StandardLogger.bufferedLog.setLength(0);
+        StandardLogger.startLoggingToBuffer();
 
         try {
             getConnectionWithProps(props);
 
-            assertTrue(StringUtils.indexOfIgnoreCase(StandardLogger.bufferedLog.toString(), "SET NAMES utf8") == -1);
+            assertTrue(StringUtils.indexOfIgnoreCase(StandardLogger.getBuffer().toString(), "SET NAMES utf8") == -1);
         } finally {
-            StandardLogger.bufferedLog = null;
+            StandardLogger.dropBuffer();
         }
     }
 
@@ -1352,9 +1350,7 @@ public class ConnectionTest extends BaseTestCase {
 
         PrintStream stderr = System.err;
 
-        StringBuffer logBuf = new StringBuffer();
-
-        StandardLogger.bufferedLog = logBuf;
+        StandardLogger.startLoggingToBuffer();
 
         try {
             Properties props = new Properties();
@@ -1364,8 +1360,10 @@ public class ConnectionTest extends BaseTestCase {
 
             uaConn = getConnectionWithProps(props);
 
-            assertTrue("Result set threshold message not present", logBuf.toString().indexOf("larger than \"resultSetSizeThreshold\" of 4 rows") != -1);
+            assertTrue("Result set threshold message not present",
+                    StandardLogger.getBuffer().toString().indexOf("larger than \"resultSetSizeThreshold\" of 4 rows") != -1);
         } finally {
+            StandardLogger.dropBuffer();
             System.setErr(stderr);
 
             if (uaConn != null) {
@@ -1384,13 +1382,13 @@ public class ConnectionTest extends BaseTestCase {
         props.setProperty("useLocalTransactionState", "true");
         props.setProperty("profileSQL", "true");
 
-        StringBuffer buf = new StringBuffer();
-        StandardLogger.bufferedLog = buf;
+        StandardLogger.startLoggingToBuffer();
 
         createTable("testUseLocalSessionState", "(field1 varchar(32))", "InnoDB");
 
         Connection localStateConn = null;
         Statement localStateStmt = null;
+        String searchIn = "";
 
         try {
             localStateConn = getConnectionWithProps(props);
@@ -1405,7 +1403,8 @@ public class ConnectionTest extends BaseTestCase {
             localStateConn.commit();
             localStateStmt.close();
         } finally {
-            StandardLogger.bufferedLog = null;
+            searchIn = StandardLogger.getBuffer().toString();
+            StandardLogger.dropBuffer();
 
             if (localStateStmt != null) {
                 localStateStmt.close();
@@ -1418,8 +1417,6 @@ public class ConnectionTest extends BaseTestCase {
 
         int rollbackCount = 0;
         int rollbackPos = 0;
-
-        String searchIn = buf.toString();
 
         while (rollbackPos != -1) {
             rollbackPos = searchIn.indexOf("rollback", rollbackPos);
@@ -1549,7 +1546,14 @@ public class ConnectionTest extends BaseTestCase {
     }
 
     public void testNonVerifyServerCert() throws Exception {
-        getConnectionWithProps("useSSL=true,verifyServerCertificate=false,requireSSL=true");
+        Properties props = new Properties();
+        props.setProperty("useSSL", "true");
+        props.setProperty("verifyServerCertificate", "false");
+        props.setProperty("requireSSL", "true");
+        if (Util.getJVMVersion() < 8 && versionMeetsMinimum(5, 7, 6) && isCommunityEdition()) {
+            props.setProperty("enabledSSLCipherSuites", SSL_CIPHERS_FOR_576);
+        }
+        getConnectionWithProps(props);
     }
 
     public void testSelfDestruct() throws Exception {
@@ -1680,19 +1684,17 @@ public class ConnectionTest extends BaseTestCase {
                 Connection notLocalState = getConnectionWithProps("profileSql=true");
 
                 for (int i = 0; i < 2; i++) {
-                    StandardLogger.bufferedLog = new StringBuffer();
-                    StandardLogger.saveLogsToBuffer();
+                    StandardLogger.startLoggingToBuffer();
                     notLocalState.setReadOnly(true);
-                    assertTrue(StandardLogger.bufferedLog.toString().indexOf("set session transaction read only") != -1);
+                    assertTrue(StandardLogger.getBuffer().toString().indexOf("set session transaction read only") != -1);
                     notLocalState.createStatement().execute("set session transaction read write");
                     assertFalse(notLocalState.isReadOnly());
                 }
 
                 for (int i = 0; i < 2; i++) {
-                    StandardLogger.bufferedLog = new StringBuffer();
-                    StandardLogger.saveLogsToBuffer();
+                    StandardLogger.startLoggingToBuffer();
                     notLocalState.setReadOnly(false);
-                    assertTrue(StandardLogger.bufferedLog.toString().indexOf("set session transaction read write") != -1);
+                    assertTrue(StandardLogger.getBuffer().toString().indexOf("set session transaction read write") != -1);
                     notLocalState.createStatement().execute("set session transaction read only");
                     assertTrue(notLocalState.isReadOnly());
                 }
@@ -1700,21 +1702,30 @@ public class ConnectionTest extends BaseTestCase {
                 Connection localState = getConnectionWithProps("profileSql=true,useLocalSessionState=true");
 
                 for (int i = 0; i < 2; i++) {
-                    StandardLogger.bufferedLog = new StringBuffer();
-                    StandardLogger.saveLogsToBuffer();
+                    StandardLogger.startLoggingToBuffer();
                     localState.setReadOnly(true);
                     if (i == 0) {
-                        assertTrue(StandardLogger.bufferedLog.toString().indexOf("set session transaction read only") != -1);
+                        assertTrue(StandardLogger.getBuffer().toString().indexOf("set session transaction read only") != -1);
                     } else {
-                        assertTrue(StandardLogger.bufferedLog.toString().indexOf("set session transaction read only") == -1);
+                        assertTrue(StandardLogger.getBuffer().toString().indexOf("set session transaction read only") == -1);
                     }
-                    StandardLogger.bufferedLog = new StringBuffer();
-                    StandardLogger.saveLogsToBuffer();
+                    StandardLogger.startLoggingToBuffer();
                     localState.isReadOnly();
-                    assertTrue(StandardLogger.bufferedLog.toString().indexOf("select @@session.tx_read_only") == -1);
+                    assertTrue(StandardLogger.getBuffer().toString().indexOf("select @@session.tx_read_only") == -1);
+                }
+
+                Connection noOptimization = getConnectionWithProps("profileSql=true,readOnlyPropagatesToServer=false");
+
+                for (int i = 0; i < 2; i++) {
+                    StandardLogger.startLoggingToBuffer();
+                    noOptimization.setReadOnly(true);
+                    assertTrue(StandardLogger.getBuffer().toString().indexOf("set session transaction read only") == -1);
+                    StandardLogger.startLoggingToBuffer();
+                    noOptimization.isReadOnly();
+                    assertTrue(StandardLogger.getBuffer().toString().indexOf("select @@session.tx_read_only") == -1);
                 }
             } finally {
-                StandardLogger.bufferedLog = null;
+                StandardLogger.dropBuffer();
             }
         }
     }
@@ -1754,5 +1765,94 @@ public class ConnectionTest extends BaseTestCase {
         testRS.close();
         testStmt.close();
         testConn.close();
+    }
+
+    /**
+     * Test connection property cacheDefaultTimezone.
+     * 
+     * @throws SQLException
+     */
+    public void testCacheDefaultTimezone() throws Exception {
+        final TimeZone defaultTZ = TimeZone.getDefault();
+        final TimeZone testTZ1 = TimeZone.getTimeZone("GMT-2");
+        final TimeZone testTZ2 = TimeZone.getTimeZone("GMT+2");
+
+        createTable("testCacheDefTZ", "(test TINYINT, dt DATETIME)");
+
+        Properties connProps = new Properties();
+        connProps.setProperty("useTimezone", "true");
+
+        SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+
+        for (boolean cacheDefTZ : new boolean[] { true, false }) {
+            try {
+                String testMsg = "Test case [cacheDefaultTimezone=" + cacheDefTZ + "],";
+                connProps.setProperty("cacheDefaultTimezone", Boolean.toString(cacheDefTZ));
+
+                Connection testConn = getConnectionWithProps(connProps);
+                PreparedStatement testPstmt = testConn.prepareStatement("INSERT INTO testCacheDefTZ VALUES (?, ?)");
+
+                sdf.setTimeZone(testTZ1);
+                java.sql.Timestamp tsIn = new java.sql.Timestamp(sdf.parse("1998-05-21 12:00:00").getTime());
+
+                /*
+                 * Insert same date/time instant twice using different default time zones.
+                 * Same values must be stored when default time zone is cached. Different values otherwise.
+                 */
+                TimeZone.setDefault(testTZ1);
+                testPstmt.setBoolean(1, cacheDefTZ);
+                testPstmt.setTimestamp(2, tsIn);
+                assertEquals(testMsg, 1, testPstmt.executeUpdate());
+
+                TimeZone.setDefault(testTZ2);
+                testPstmt.setBoolean(1, cacheDefTZ);
+                testPstmt.setTimestamp(2, tsIn);
+                assertEquals(testMsg, 1, testPstmt.executeUpdate());
+
+                testPstmt.close();
+
+                TimeZone.setDefault(defaultTZ);
+
+                /*
+                 * Verify that equal values are retrieved when default time zone is cached and different values otherwise, when default time zone doesn't
+                 * change while reading data.
+                 */
+                Statement testStmt = testConn.createStatement();
+                ResultSet testRs = testStmt.executeQuery("SELECT * FROM testCacheDefTZ WHERE test = " + cacheDefTZ);
+
+                assertTrue(testMsg, testRs.next());
+                java.sql.Timestamp timestampOut = testRs.getTimestamp(2);
+
+                assertTrue(testMsg, testRs.next());
+                assertEquals(testMsg, cacheDefTZ, timestampOut.equals(testRs.getTimestamp(2)));
+
+                assertFalse(testMsg, testRs.next());
+
+                /*
+                 * Verify that retrieving values from the ResultSet is also affected by default time zone caching setting, allowing to "convert" them to the
+                 * original date value when time zone caching is disabled.
+                 * When time zone caching is enabled then the values stored in the database were the same and changing the default time zone while retrieving
+                 * them doesn't affect the result.
+                 */
+                testRs = testStmt.executeQuery("SELECT * FROM testCacheDefTZ WHERE test = " + cacheDefTZ);
+
+                TimeZone.setDefault(testTZ1);
+                assertTrue(testMsg, testRs.next());
+                timestampOut = testRs.getTimestamp(2);
+
+                TimeZone.setDefault(testTZ2);
+                assertTrue(testMsg, testRs.next());
+                assertEquals(testMsg, timestampOut, testRs.getTimestamp(2));
+
+                assertFalse(testMsg, testRs.next());
+
+                testRs.close();
+                testStmt.close();
+
+                testConn.close();
+            } finally {
+                TimeZone.setDefault(defaultTZ);
+            }
+        }
     }
 }

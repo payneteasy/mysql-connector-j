@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2002, 2014, Oracle and/or its affiliates. All rights reserved.
+  Copyright (c) 2002, 2015, Oracle and/or its affiliates. All rights reserved.
 
   The MySQL Connector/J is licensed under the terms of the GPLv2
   <http://www.gnu.org/licenses/old-licenses/gpl-2.0.html>, like most MySQL Connectors.
@@ -574,7 +574,7 @@ public class ServerPreparedStatement extends PreparedStatement {
 
     private void dumpCloseForTestcase() throws SQLException {
         synchronized (checkClosed().getConnectionMutex()) {
-            StringBuffer buf = new StringBuffer();
+            StringBuilder buf = new StringBuilder();
             this.connection.generateConnectionCommentBlock(buf);
             buf.append("DEALLOCATE PREPARE debug_stmt_");
             buf.append(this.statementId);
@@ -586,7 +586,7 @@ public class ServerPreparedStatement extends PreparedStatement {
 
     private void dumpExecuteForTestcase() throws SQLException {
         synchronized (checkClosed().getConnectionMutex()) {
-            StringBuffer buf = new StringBuffer();
+            StringBuilder buf = new StringBuilder();
 
             for (int i = 0; i < this.parameterCount; i++) {
                 this.connection.generateConnectionCommentBlock(buf);
@@ -634,7 +634,7 @@ public class ServerPreparedStatement extends PreparedStatement {
 
     private void dumpPrepareForTestcase() throws SQLException {
         synchronized (checkClosed().getConnectionMutex()) {
-            StringBuffer buf = new StringBuffer(this.originalSql.length() + 64);
+            StringBuilder buf = new StringBuilder(this.originalSql.length() + 64);
 
             this.connection.generateConnectionCommentBlock(buf);
 
@@ -800,7 +800,7 @@ public class ServerPreparedStatement extends PreparedStatement {
 
                 if (this.connection.getDumpQueriesOnException()) {
                     String extractedSql = toString();
-                    StringBuffer messageBuf = new StringBuffer(extractedSql.length() + 32);
+                    StringBuilder messageBuf = new StringBuilder(extractedSql.length() + 32);
                     messageBuf.append("\n\nQuery being executed when exception was thrown:\n");
                     messageBuf.append(extractedSql);
                     messageBuf.append("\n\n");
@@ -818,7 +818,7 @@ public class ServerPreparedStatement extends PreparedStatement {
 
                 if (this.connection.getDumpQueriesOnException()) {
                     String extractedSql = toString();
-                    StringBuffer messageBuf = new StringBuffer(extractedSql.length() + 32);
+                    StringBuilder messageBuf = new StringBuilder(extractedSql.length() + 32);
                     messageBuf.append("\n\nQuery being executed when exception was thrown:\n");
                     messageBuf.append(extractedSql);
                     messageBuf.append("\n\n");
@@ -1338,7 +1338,7 @@ public class ServerPreparedStatement extends PreparedStatement {
 
                     if (queryWasSlow) {
 
-                        StringBuffer mesgBuf = new StringBuffer(48 + this.originalSql.length());
+                        StringBuilder mesgBuf = new StringBuilder(48 + this.originalSql.length());
                         mesgBuf.append(Messages.getString("ServerPreparedStatement.15"));
                         mesgBuf.append(mysql.getSlowQueryThreshold());
                         mesgBuf.append(Messages.getString("ServerPreparedStatement.15a"));
@@ -1568,7 +1568,7 @@ public class ServerPreparedStatement extends PreparedStatement {
                 }
             } catch (SQLException sqlEx) {
                 if (this.connection.getDumpQueriesOnException()) {
-                    StringBuffer messageBuf = new StringBuffer(this.originalSql.length() + 32);
+                    StringBuilder messageBuf = new StringBuilder(this.originalSql.length() + 32);
                     messageBuf.append("\n\nQuery being prepared when exception was thrown:\n\n");
                     messageBuf.append(this.originalSql);
 
@@ -1588,7 +1588,7 @@ public class ServerPreparedStatement extends PreparedStatement {
             String query = null;
 
             if (sql.length() > this.connection.getMaxQuerySizeToLog()) {
-                StringBuffer queryBuf = new StringBuffer(this.connection.getMaxQuerySizeToLog() + 12);
+                StringBuilder queryBuf = new StringBuilder(this.connection.getMaxQuerySizeToLog() + 12);
                 queryBuf.append(sql.substring(0, this.connection.getMaxQuerySizeToLog()));
                 queryBuf.append(Messages.getString("MysqlIO.25"));
 
@@ -2071,7 +2071,9 @@ public class ServerPreparedStatement extends PreparedStatement {
      */
     @Override
     public void setTime(int parameterIndex, java.sql.Time x, Calendar cal) throws SQLException {
-        setTimeInternal(parameterIndex, x, cal, cal.getTimeZone(), true);
+        synchronized (checkClosed().getConnectionMutex()) {
+            setTimeInternal(parameterIndex, x, cal, cal.getTimeZone(), true);
+        }
     }
 
     /**
@@ -2089,26 +2091,24 @@ public class ServerPreparedStatement extends PreparedStatement {
      * @throws SQLException
      *             if a database access error occurs
      */
-    protected void setTimeInternal(int parameterIndex, java.sql.Time x, Calendar targetCalendar, TimeZone tz, boolean rollForward) throws SQLException {
-        synchronized (checkClosed().getConnectionMutex()) {
-            if (x == null) {
-                setNull(parameterIndex, java.sql.Types.TIME);
+    private void setTimeInternal(int parameterIndex, java.sql.Time x, Calendar targetCalendar, TimeZone tz, boolean rollForward) throws SQLException {
+        if (x == null) {
+            setNull(parameterIndex, java.sql.Types.TIME);
+        } else {
+            BindValue binding = getBinding(parameterIndex, false);
+            setType(binding, MysqlDefs.FIELD_TYPE_TIME);
+
+            if (!this.useLegacyDatetimeCode) {
+                binding.value = x;
             } else {
-                BindValue binding = getBinding(parameterIndex, false);
-                setType(binding, MysqlDefs.FIELD_TYPE_TIME);
+                Calendar sessionCalendar = getCalendarInstanceForSessionOrNew();
 
-                if (!this.useLegacyDatetimeCode) {
-                    binding.value = x;
-                } else {
-                    Calendar sessionCalendar = getCalendarInstanceForSessionOrNew();
-
-                    binding.value = TimeUtil.changeTimezone(this.connection, sessionCalendar, targetCalendar, x, tz, this.connection.getServerTimezoneTZ(),
-                            rollForward);
-                }
-
-                binding.isNull = false;
-                binding.isLongData = false;
+                binding.value = TimeUtil.changeTimezone(this.connection, sessionCalendar, targetCalendar, x, tz, this.connection.getServerTimezoneTZ(),
+                        rollForward);
             }
+
+            binding.isNull = false;
+            binding.isLongData = false;
         }
     }
 
@@ -2152,27 +2152,24 @@ public class ServerPreparedStatement extends PreparedStatement {
         }
     }
 
-    protected void setTimestampInternal(int parameterIndex, java.sql.Timestamp x, Calendar targetCalendar, TimeZone tz, boolean rollForward)
-            throws SQLException {
-        synchronized (checkClosed().getConnectionMutex()) {
-            if (x == null) {
-                setNull(parameterIndex, java.sql.Types.TIMESTAMP);
+    private void setTimestampInternal(int parameterIndex, java.sql.Timestamp x, Calendar targetCalendar, TimeZone tz, boolean rollForward) throws SQLException {
+        if (x == null) {
+            setNull(parameterIndex, java.sql.Types.TIMESTAMP);
+        } else {
+            BindValue binding = getBinding(parameterIndex, false);
+            setType(binding, MysqlDefs.FIELD_TYPE_DATETIME);
+
+            if (!this.useLegacyDatetimeCode) {
+                binding.value = x;
             } else {
-                BindValue binding = getBinding(parameterIndex, false);
-                setType(binding, MysqlDefs.FIELD_TYPE_DATETIME);
+                Calendar sessionCalendar = this.connection.getUseJDBCCompliantTimezoneShift() ? this.connection.getUtcCalendar()
+                        : getCalendarInstanceForSessionOrNew();
 
-                if (!this.useLegacyDatetimeCode) {
-                    binding.value = x;
-                } else {
-                    Calendar sessionCalendar = this.connection.getUseJDBCCompliantTimezoneShift() ? this.connection.getUtcCalendar()
-                            : getCalendarInstanceForSessionOrNew();
+                binding.value = TimeUtil.changeTimezone(this.connection, sessionCalendar, targetCalendar, x, tz, this.connection.getServerTimezoneTZ(),
+                        rollForward);
 
-                    binding.value = TimeUtil.changeTimezone(this.connection, sessionCalendar, targetCalendar, x, tz, this.connection.getServerTimezoneTZ(),
-                            rollForward);
-
-                    binding.isNull = false;
-                    binding.isLongData = false;
-                }
+                binding.isNull = false;
+                binding.isLongData = false;
             }
         }
     }
@@ -2601,7 +2598,7 @@ public class ServerPreparedStatement extends PreparedStatement {
      */
     @Override
     public String toString() {
-        StringBuffer toStringBuf = new StringBuffer();
+        StringBuilder toStringBuf = new StringBuilder();
 
         toStringBuf.append("com.mysql.jdbc.ServerPreparedStatement[");
         toStringBuf.append(this.serverStatementId);
@@ -2680,7 +2677,8 @@ public class ServerPreparedStatement extends PreparedStatement {
     protected int getLocationOfOnDuplicateKeyUpdate() throws SQLException {
         synchronized (checkClosed().getConnectionMutex()) {
             if (this.locationOfOnDuplicateKeyUpdate == -2) {
-                this.locationOfOnDuplicateKeyUpdate = getOnDuplicateKeyLocation(this.originalSql);
+                this.locationOfOnDuplicateKeyUpdate = getOnDuplicateKeyLocation(this.originalSql, this.connection.getDontCheckOnDuplicateKeyUpdateInSQL(),
+                        this.connection.getRewriteBatchedStatements(), this.connection.isNoBackslashEscapesSet());
             }
 
             return this.locationOfOnDuplicateKeyUpdate;

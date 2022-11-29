@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2002, 2014, Oracle and/or its affiliates. All rights reserved.
+  Copyright (c) 2002, 2015, Oracle and/or its affiliates. All rights reserved.
 
   The MySQL Connector/J is licensed under the terms of the GPLv2
   <http://www.gnu.org/licenses/old-licenses/gpl-2.0.html>, like most MySQL Connectors.
@@ -114,6 +114,10 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements MySQLCon
     }
 
     public MySQLConnection getLoadBalanceSafeProxy() {
+        return getMultiHostSafeProxy();
+    }
+
+    public MySQLConnection getMultiHostSafeProxy() {
         return this.getProxy();
     }
 
@@ -319,7 +323,7 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements MySQLCon
         String sqlState = sqlEx.getSQLState();
         int vendorErrorCode = sqlEx.getErrorCode();
 
-        StringBuffer messageBuf = new StringBuffer(origMessage.length() + messageToAppend.length());
+        StringBuilder messageBuf = new StringBuilder(origMessage.length() + messageToAppend.length());
         messageBuf.append(origMessage);
         messageBuf.append(messageToAppend);
 
@@ -727,11 +731,6 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements MySQLCon
         //
         this.log = LogFactory.getLogger(getLogger(), LOGGER_INSTANCE_NAME, getExceptionInterceptor());
 
-        // We store this per-connection, due to static synchronization issues in Java's built-in TimeZone class...
-        this.defaultTimeZone = Util.getDefaultTimeZone();
-
-        this.isClientTzUTC = "GMT".equalsIgnoreCase(this.defaultTimeZone.getID());
-
         this.openStatements = new HashMap<Statement, Statement>();
 
         if (NonRegisteringDriver.isHostPropertiesList(hostToConnectTo)) {
@@ -780,6 +779,11 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements MySQLCon
 
         initializeDriverProperties(info);
 
+        // We store this per-connection, due to static synchronization issues in Java's built-in TimeZone class...
+        this.defaultTimeZone = TimeUtil.getDefaultTimeZone(getCacheDefaultTimezone());
+
+        this.isClientTzUTC = "GMT".equalsIgnoreCase(this.defaultTimeZone.getID());
+
         if (getUseUsageAdvisor()) {
             this.pointOfOrigin = LogUtils.findCallingClassAndMethod(new Throwable());
         } else {
@@ -799,7 +803,7 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements MySQLCon
         } catch (Exception ex) {
             cleanup(ex);
 
-            StringBuffer mesg = new StringBuffer(128);
+            StringBuilder mesg = new StringBuilder(128);
 
             if (!getParanoid()) {
                 mesg.append("Cannot connect to MySQL server on ");
@@ -1142,6 +1146,8 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements MySQLCon
             canHandleAsStatement = false;
         } else if (StringUtils.startsWithIgnoreCaseAndWs(sql, "SET")) {
             canHandleAsStatement = false;
+        } else if (StringUtils.startsWithIgnoreCaseAndWs(sql, "SHOW WARNINGS") && versionMeetsMinimum(5, 7, 2)) {
+            canHandleAsStatement = false;
         }
 
         return canHandleAsStatement;
@@ -1229,9 +1235,8 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements MySQLCon
     }
 
     public void throwConnectionClosedException() throws SQLException {
-        StringBuffer messageBuf = new StringBuffer("No operations allowed after connection closed.");
-
-        SQLException ex = SQLError.createSQLException(messageBuf.toString(), SQLError.SQL_STATE_CONNECTION_NOT_OPEN, getExceptionInterceptor());
+        SQLException ex = SQLError.createSQLException("No operations allowed after connection closed.", SQLError.SQL_STATE_CONNECTION_NOT_OPEN,
+                getExceptionInterceptor());
 
         if (this.forceClosedReason != null) {
             ex.initCause(this.forceClosedReason);
@@ -1442,14 +1447,14 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements MySQLCon
             PreparedStatement.ParseInfo pStmtInfo = this.cachedPreparedStatementParams.get(nativeSql);
 
             if (pStmtInfo == null) {
-                pStmt = com.mysql.jdbc.PreparedStatement.getInstance(getLoadBalanceSafeProxy(), nativeSql, this.database);
+                pStmt = com.mysql.jdbc.PreparedStatement.getInstance(getMultiHostSafeProxy(), nativeSql, this.database);
 
                 this.cachedPreparedStatementParams.put(nativeSql, pStmt.getParseInfo());
             } else {
-                pStmt = new com.mysql.jdbc.PreparedStatement(getLoadBalanceSafeProxy(), nativeSql, this.database, pStmtInfo);
+                pStmt = new com.mysql.jdbc.PreparedStatement(getMultiHostSafeProxy(), nativeSql, this.database, pStmtInfo);
             }
         } else {
-            pStmt = com.mysql.jdbc.PreparedStatement.getInstance(getLoadBalanceSafeProxy(), nativeSql, this.database);
+            pStmt = com.mysql.jdbc.PreparedStatement.getInstance(getMultiHostSafeProxy(), nativeSql, this.database);
         }
 
         pStmt.setResultSetType(resultSetType);
@@ -1891,7 +1896,7 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements MySQLCon
                     }
 
                     if (!mysqlEncodingName.equalsIgnoreCase(this.serverVariables.get("character_set_results"))) {
-                        StringBuffer setBuf = new StringBuffer("SET character_set_results = ".length() + mysqlEncodingName.length());
+                        StringBuilder setBuf = new StringBuilder("SET character_set_results = ".length() + mysqlEncodingName.length());
                         setBuf.append("SET character_set_results = ").append(mysqlEncodingName);
 
                         try {
@@ -1916,7 +1921,7 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements MySQLCon
                 }
 
                 if (getConnectionCollation() != null) {
-                    StringBuffer setBuf = new StringBuffer("SET collation_connection = ".length() + getConnectionCollation().length());
+                    StringBuilder setBuf = new StringBuilder("SET collation_connection = ".length() + getConnectionCollation().length());
                     setBuf.append("SET collation_connection = ").append(getConnectionCollation());
 
                     try {
@@ -2418,7 +2423,7 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements MySQLCon
     public java.sql.Statement createStatement(int resultSetType, int resultSetConcurrency) throws SQLException {
         checkClosed();
 
-        StatementImpl stmt = new StatementImpl(getLoadBalanceSafeProxy(), this.database);
+        StatementImpl stmt = new StatementImpl(getMultiHostSafeProxy(), this.database);
         stmt.setResultSetType(resultSetType);
         stmt.setResultSetConcurrency(resultSetConcurrency);
 
@@ -2536,7 +2541,7 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements MySQLCon
 
                 if (getDumpQueriesOnException()) {
                     String extractedSql = extractSqlFromPacket(sql, packet, endOfQueryPacketPosition);
-                    StringBuffer messageBuf = new StringBuffer(extractedSql.length() + 32);
+                    StringBuilder messageBuf = new StringBuilder(extractedSql.length() + 32);
                     messageBuf.append("\n\nQuery being executed when exception was thrown:\n");
                     messageBuf.append(extractedSql);
                     messageBuf.append("\n\n");
@@ -2587,7 +2592,7 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements MySQLCon
 
         if (possibleSqlQuery != null) {
             if (possibleSqlQuery.length() > getMaxQuerySizeToLog()) {
-                StringBuffer truncatedQueryBuf = new StringBuffer(possibleSqlQuery.substring(0, getMaxQuerySizeToLog()));
+                StringBuilder truncatedQueryBuf = new StringBuilder(possibleSqlQuery.substring(0, getMaxQuerySizeToLog()));
                 truncatedQueryBuf.append(Messages.getString("MysqlIO.25"));
                 extractedSql = truncatedQueryBuf.toString();
             } else {
@@ -2618,7 +2623,7 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements MySQLCon
 
     }
 
-    public StringBuffer generateConnectionCommentBlock(StringBuffer buf) {
+    public StringBuilder generateConnectionCommentBlock(StringBuilder buf) {
         buf.append("/* conn id ");
         buf.append(getId());
         buf.append(" clock: ");
@@ -2798,7 +2803,8 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements MySQLCon
      * @return Returns the defaultTimeZone.
      */
     public TimeZone getDefaultTimeZone() {
-        return this.defaultTimeZone;
+        // If default time zone is cached then there is no need to get a new instance of it, just use the previous one.
+        return getCacheDefaultTimezone() ? this.defaultTimeZone : TimeUtil.getDefaultTimeZone(false);
     }
 
     public String getErrorMessageEncoding() {
@@ -2934,7 +2940,7 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements MySQLCon
             checkClosed();
         }
 
-        return com.mysql.jdbc.DatabaseMetaData.getInstance(getLoadBalanceSafeProxy(), this.database, checkForInfoSchema);
+        return com.mysql.jdbc.DatabaseMetaData.getInstance(getMultiHostSafeProxy(), this.database, checkForInfoSchema);
     }
 
     public java.sql.Statement getMetadataSafeStatement() throws SQLException {
@@ -3193,7 +3199,7 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements MySQLCon
         this.log = LogFactory.getLogger(getLogger(), LOGGER_INSTANCE_NAME, getExceptionInterceptor());
 
         if (getProfileSql() || getUseUsageAdvisor()) {
-            this.eventSink = ProfilerEventHandlerFactory.getInstance(getLoadBalanceSafeProxy());
+            this.eventSink = ProfilerEventHandlerFactory.getInstance(getMultiHostSafeProxy());
         }
 
         if (getCachePreparedStatements()) {
@@ -3592,7 +3598,7 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements MySQLCon
      *                if a database access error occurs
      */
     public boolean isReadOnly(boolean useSessionStatus) throws SQLException {
-        if (useSessionStatus && !this.isClosed && versionMeetsMinimum(5, 6, 5) && !getUseLocalSessionState()) {
+        if (useSessionStatus && !this.isClosed && versionMeetsMinimum(5, 6, 5) && !getUseLocalSessionState() && getReadOnlyPropagatesToServer()) {
             java.sql.Statement stmt = null;
             java.sql.ResultSet rs = null;
 
@@ -3794,7 +3800,7 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements MySQLCon
             String version = this.dbmd.getDriverVersion();
 
             if (version != null && version.indexOf('*') != -1) {
-                StringBuffer buf = new StringBuffer(version.length() + 10);
+                StringBuilder buf = new StringBuilder(version.length() + 10);
 
                 for (int i = 0; i < version.length(); i++) {
                     char c = version.charAt(i);
@@ -3913,7 +3919,7 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements MySQLCon
             return null;
         }
 
-        Object escapedSqlResult = EscapeProcessor.escapeSQL(sql, serverSupportsConvertFn(), getLoadBalanceSafeProxy());
+        Object escapedSqlResult = EscapeProcessor.escapeSQL(sql, serverSupportsConvertFn(), getMultiHostSafeProxy());
 
         if (escapedSqlResult instanceof String) {
             return (String) escapedSqlResult;
@@ -3923,7 +3929,7 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements MySQLCon
     }
 
     private CallableStatement parseCallableStatement(String sql) throws SQLException {
-        Object escapedSqlResult = EscapeProcessor.escapeSQL(sql, serverSupportsConvertFn(), getLoadBalanceSafeProxy());
+        Object escapedSqlResult = EscapeProcessor.escapeSQL(sql, serverSupportsConvertFn(), getMultiHostSafeProxy());
 
         boolean isFunctionCall = false;
         String parsedSql = null;
@@ -3936,7 +3942,7 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements MySQLCon
             isFunctionCall = false;
         }
 
-        return CallableStatement.getInstance(getLoadBalanceSafeProxy(), parsedSql, this.database, isFunctionCall);
+        return CallableStatement.getInstance(getMultiHostSafeProxy(), parsedSql, this.database, isFunctionCall);
     }
 
     public boolean parserKnowsUnicode() {
@@ -4012,7 +4018,7 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements MySQLCon
                             .get(key);
 
                     if (cachedParamInfo != null) {
-                        cStmt = CallableStatement.getInstance(getLoadBalanceSafeProxy(), cachedParamInfo);
+                        cStmt = CallableStatement.getInstance(getMultiHostSafeProxy(), cachedParamInfo);
                     } else {
                         cStmt = parseCallableStatement(sql);
 
@@ -4130,7 +4136,7 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements MySQLCon
 
                         if (pStmt == null) {
                             try {
-                                pStmt = ServerPreparedStatement.getInstance(getLoadBalanceSafeProxy(), nativeSql, this.database, resultSetType,
+                                pStmt = ServerPreparedStatement.getInstance(getMultiHostSafeProxy(), nativeSql, this.database, resultSetType,
                                         resultSetConcurrency);
                                 if (sql.length() < getPreparedStatementCacheSqlLimit()) {
                                     ((com.mysql.jdbc.ServerPreparedStatement) pStmt).isCached = true;
@@ -4154,7 +4160,7 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements MySQLCon
                     }
                 } else {
                     try {
-                        pStmt = ServerPreparedStatement.getInstance(getLoadBalanceSafeProxy(), nativeSql, this.database, resultSetType, resultSetConcurrency);
+                        pStmt = ServerPreparedStatement.getInstance(getMultiHostSafeProxy(), nativeSql, this.database, resultSetType, resultSetConcurrency);
 
                         pStmt.setResultSetType(resultSetType);
                         pStmt.setResultSetConcurrency(resultSetConcurrency);
@@ -4405,7 +4411,7 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements MySQLCon
 
     private void reportMetrics() {
         if (getGatherPerformanceMetrics()) {
-            StringBuffer logMessage = new StringBuffer(256);
+            StringBuilder logMessage = new StringBuilder(256);
 
             logMessage.append("** Performance Metrics Report **\n");
             logMessage.append("\nLongest reported query: " + this.longestQueryTimeMs + " ms");
@@ -4644,7 +4650,7 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements MySQLCon
                         }
                     }
 
-                    StringBuffer rollbackQuery = new StringBuffer("ROLLBACK TO SAVEPOINT ");
+                    StringBuilder rollbackQuery = new StringBuilder("ROLLBACK TO SAVEPOINT ");
                     rollbackQuery.append('`');
                     rollbackQuery.append(savepoint.getSavepointName());
                     rollbackQuery.append('`');
@@ -4711,7 +4717,7 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements MySQLCon
 
         String nativeSql = getProcessEscapeCodesForPrepStmts() ? nativeSQL(sql) : sql;
 
-        return ServerPreparedStatement.getInstance(getLoadBalanceSafeProxy(), nativeSql, this.getCatalog(), DEFAULT_RESULT_SET_TYPE,
+        return ServerPreparedStatement.getInstance(getMultiHostSafeProxy(), nativeSql, this.getCatalog(), DEFAULT_RESULT_SET_TYPE,
                 DEFAULT_RESULT_SET_CONCURRENCY);
     }
 
@@ -4721,7 +4727,7 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements MySQLCon
     public java.sql.PreparedStatement serverPrepareStatement(String sql, int autoGenKeyIndex) throws SQLException {
         String nativeSql = getProcessEscapeCodesForPrepStmts() ? nativeSQL(sql) : sql;
 
-        PreparedStatement pStmt = ServerPreparedStatement.getInstance(getLoadBalanceSafeProxy(), nativeSql, this.getCatalog(), DEFAULT_RESULT_SET_TYPE,
+        PreparedStatement pStmt = ServerPreparedStatement.getInstance(getMultiHostSafeProxy(), nativeSql, this.getCatalog(), DEFAULT_RESULT_SET_TYPE,
                 DEFAULT_RESULT_SET_CONCURRENCY);
 
         pStmt.setRetrieveGeneratedKeys(autoGenKeyIndex == java.sql.Statement.RETURN_GENERATED_KEYS);
@@ -4735,7 +4741,7 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements MySQLCon
     public java.sql.PreparedStatement serverPrepareStatement(String sql, int resultSetType, int resultSetConcurrency) throws SQLException {
         String nativeSql = getProcessEscapeCodesForPrepStmts() ? nativeSQL(sql) : sql;
 
-        return ServerPreparedStatement.getInstance(getLoadBalanceSafeProxy(), nativeSql, this.getCatalog(), resultSetType, resultSetConcurrency);
+        return ServerPreparedStatement.getInstance(getMultiHostSafeProxy(), nativeSql, this.getCatalog(), resultSetType, resultSetConcurrency);
     }
 
     /**
@@ -4924,10 +4930,8 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements MySQLCon
                 quotedId = "";
             }
 
-            StringBuffer query = new StringBuffer("USE ");
-            query.append(quotedId);
-            query.append(catalog);
-            query.append(quotedId);
+            StringBuilder query = new StringBuilder("USE ");
+            query.append(StringUtils.quoteIdentifier(catalog, quotedId, getPedantic()));
 
             execSQL(null, query.toString(), -1, null, DEFAULT_RESULT_SET_TYPE, DEFAULT_RESULT_SET_CONCURRENCY, false, this.database, null, false);
 
@@ -4988,7 +4992,7 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements MySQLCon
 
     public void setReadOnlyInternal(boolean readOnlyFlag) throws SQLException {
         // note this this is safe even inside a transaction
-        if (versionMeetsMinimum(5, 6, 5)) {
+        if (getReadOnlyPropagatesToServer() && versionMeetsMinimum(5, 6, 5)) {
             if (!getUseLocalSessionState() || (readOnlyFlag != this.readOnly)) {
                 execSQL(null, "set session transaction " + (readOnlyFlag ? "read only" : "read write"), -1, null, DEFAULT_RESULT_SET_TYPE,
                         DEFAULT_RESULT_SET_CONCURRENCY, false, this.database, null, false);
@@ -5015,7 +5019,7 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements MySQLCon
             if (versionMeetsMinimum(4, 0, 14) || versionMeetsMinimum(4, 1, 1)) {
                 checkClosed();
 
-                StringBuffer savePointQuery = new StringBuffer("SAVEPOINT ");
+                StringBuilder savePointQuery = new StringBuilder("SAVEPOINT ");
                 savePointQuery.append('`');
                 savePointQuery.append(savepoint.getSavepointName());
                 savePointQuery.append('`');
@@ -5166,7 +5170,7 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements MySQLCon
                 boolean strictTransTablesIsSet = StringUtils.indexOfIgnoreCase(currentSqlMode, "STRICT_TRANS_TABLES") != -1;
 
                 if (currentSqlMode == null || currentSqlMode.length() == 0 || !strictTransTablesIsSet) {
-                    StringBuffer commandBuf = new StringBuffer("SET sql_mode='");
+                    StringBuilder commandBuf = new StringBuilder("SET sql_mode='");
 
                     if (currentSqlMode != null && currentSqlMode.length() > 0) {
                         commandBuf.append(currentSqlMode);

@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2013, 2014, Oracle and/or its affiliates. All rights reserved.
+  Copyright (c) 2013, 2015, Oracle and/or its affiliates. All rights reserved.
 
   The MySQL Connector/J is licensed under the terms of the GPLv2
   <http://www.gnu.org/licenses/old-licenses/gpl-2.0.html>, like most MySQL Connectors.
@@ -255,7 +255,7 @@ public class FabricMySQLConnectionProxy extends ConnectionPropertiesImpl impleme
                 throw SQLError.createSQLException("Shard key cannot be provided when server group is chosen directly.", SQLError.SQL_STATE_ILLEGAL_ARGUMENT,
                         null, getExceptionInterceptor(), this);
             } else if (this.shardTable == null) {
-                throw SQLError.createSQLException("Shard key cannot be provided with a shard table.", SQLError.SQL_STATE_ILLEGAL_ARGUMENT, null,
+                throw SQLError.createSQLException("Shard key cannot be provided without a shard table.", SQLError.SQL_STATE_ILLEGAL_ARGUMENT, null,
                         getExceptionInterceptor(), this);
             }
 
@@ -597,6 +597,10 @@ public class FabricMySQLConnectionProxy extends ConnectionPropertiesImpl impleme
     }
 
     public MySQLConnection getLoadBalanceSafeProxy() {
+        return getMultiHostSafeProxy();
+    }
+
+    public MySQLConnection getMultiHostSafeProxy() {
         return getActiveMySQLConnectionPassive();
     }
 
@@ -778,12 +782,32 @@ public class FabricMySQLConnectionProxy extends ConnectionPropertiesImpl impleme
         return getActiveMySQLConnection().extractSqlFromPacket(possibleSqlQuery, queryPacket, endOfQueryPacketPosition);
     }
 
-    public StringBuffer generateConnectionCommentBlock(StringBuffer buf) {
+    public StringBuilder generateConnectionCommentBlock(StringBuilder buf) {
         return getActiveMySQLConnectionPassive().generateConnectionCommentBlock(buf);
     }
 
     public MysqlIO getIO() throws SQLException {
         return getActiveMySQLConnection().getIO();
+    }
+
+    public Calendar getCalendarInstanceForSessionOrNew() {
+        return getActiveMySQLConnectionPassive().getCalendarInstanceForSessionOrNew();
+    }
+
+    /**
+     * @deprecated replaced by <code>getServerCharset()</code>
+     */
+    @Deprecated
+    public String getServerCharacterEncoding() {
+        return getServerCharset();
+    }
+
+    public String getServerCharset() {
+        return getActiveMySQLConnectionPassive().getServerCharset();
+    }
+
+    public TimeZone getServerTimezoneTZ() {
+        return getActiveMySQLConnectionPassive().getServerTimezoneTZ();
     }
 
     /**
@@ -2564,22 +2588,6 @@ public class FabricMySQLConnectionProxy extends ConnectionPropertiesImpl impleme
         return null;
     }
 
-    /**
-     * @deprecated replaced by <code>getServerCharset()</code>
-     */
-    @Deprecated
-    public String getServerCharacterEncoding() {
-        return getServerCharset();
-    }
-
-    public String getServerCharset() {
-        return null;
-    }
-
-    public TimeZone getServerTimezoneTZ() {
-        return null;
-    }
-
     public boolean isMasterConnection() {
         return false;
     }
@@ -2677,10 +2685,6 @@ public class FabricMySQLConnectionProxy extends ConnectionPropertiesImpl impleme
     }
 
     public CachedResultSetMetaData getCachedMetaData(String sql) {
-        return null;
-    }
-
-    public Calendar getCalendarInstanceForSessionOrNew() {
         return null;
     }
 

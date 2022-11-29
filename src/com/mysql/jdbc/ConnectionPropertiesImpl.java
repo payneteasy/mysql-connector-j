@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2002, 2014, Oracle and/or its affiliates. All rights reserved.
+  Copyright (c) 2002, 2015, Oracle and/or its affiliates. All rights reserved.
 
   The MySQL Connector/J is licensed under the terms of the GPLv2
   <http://www.gnu.org/licenses/old-licenses/gpl-2.0.html>, like most MySQL Connectors.
@@ -276,7 +276,7 @@ public class ConnectionPropertiesImpl implements Serializable, ConnectionPropert
                 }
             }
 
-            StringBuffer errorMessageBuf = new StringBuffer();
+            StringBuilder errorMessageBuf = new StringBuilder();
 
             errorMessageBuf.append("The connection property '");
             errorMessageBuf.append(getPropertyName());
@@ -937,6 +937,12 @@ public class ConnectionPropertiesImpl implements Serializable, ConnectionPropert
     private BooleanConnectionProperty noTimezoneConversionForTimeType = new BooleanConnectionProperty("noTimezoneConversionForTimeType", false,
             Messages.getString("ConnectionProperties.noTzConversionForTimeType"), "5.0.0", MISC_CATEGORY, Integer.MIN_VALUE);
 
+    private BooleanConnectionProperty noTimezoneConversionForDateType = new BooleanConnectionProperty("noTimezoneConversionForDateType", true,
+            Messages.getString("ConnectionProperties.noTzConversionForDateType"), "5.1.35", MISC_CATEGORY, Integer.MIN_VALUE);
+
+    private BooleanConnectionProperty cacheDefaultTimezone = new BooleanConnectionProperty("cacheDefaultTimezone", true,
+            Messages.getString("ConnectionProperties.cacheDefaultTimezone"), "5.1.35", MISC_CATEGORY, Integer.MIN_VALUE);
+
     private BooleanConnectionProperty nullCatalogMeansCurrent = new BooleanConnectionProperty("nullCatalogMeansCurrent", true,
             Messages.getString("ConnectionProperties.nullCatalogMeansCurrent"), "3.1.8", MISC_CATEGORY, Integer.MIN_VALUE);
 
@@ -1029,7 +1035,7 @@ public class ConnectionPropertiesImpl implements Serializable, ConnectionPropert
     private BooleanConnectionProperty runningCTS13 = new BooleanConnectionProperty("runningCTS13", false,
             Messages.getString("ConnectionProperties.runningCTS13"), "3.1.7", MISC_CATEGORY, Integer.MIN_VALUE);
 
-    private IntegerConnectionProperty secondsBeforeRetryMaster = new IntegerConnectionProperty("secondsBeforeRetryMaster", 30, 1, Integer.MAX_VALUE,
+    private IntegerConnectionProperty secondsBeforeRetryMaster = new IntegerConnectionProperty("secondsBeforeRetryMaster", 30, 0, Integer.MAX_VALUE,
             Messages.getString("ConnectionProperties.secondsBeforeRetryMaster"), "3.0.2", HA_CATEGORY, 8);
 
     private IntegerConnectionProperty selfDestructOnPingSecondsLifetime = new IntegerConnectionProperty("selfDestructOnPingSecondsLifetime", 0, 0,
@@ -1059,8 +1065,8 @@ public class ConnectionPropertiesImpl implements Serializable, ConnectionPropert
     private StringConnectionProperty socksProxyHost = new StringConnectionProperty("socksProxyHost", null,
             Messages.getString("ConnectionProperties.socksProxyHost"), "5.1.34", NETWORK_CATEGORY, 1);
 
-    private IntegerConnectionProperty socksProxyPort = new IntegerConnectionProperty("socksProxyPort", SocksProxySocketFactory.SOCKS_DEFAULT_PORT, 0,
-            65535, Messages.getString("ConnectionProperties.socksProxyPort"), "5.1.34", NETWORK_CATEGORY, 2);
+    private IntegerConnectionProperty socksProxyPort = new IntegerConnectionProperty("socksProxyPort", SocksProxySocketFactory.SOCKS_DEFAULT_PORT, 0, 65535,
+            Messages.getString("ConnectionProperties.socksProxyPort"), "5.1.34", NETWORK_CATEGORY, 2);
 
     private IntegerConnectionProperty socketTimeout = new IntegerConnectionProperty("socketTimeout", 0, 0, Integer.MAX_VALUE,
             Messages.getString("ConnectionProperties.socketTimeout"), "3.0.1", CONNECTION_AND_AUTH_CATEGORY, 10);
@@ -1287,6 +1293,12 @@ public class ConnectionPropertiesImpl implements Serializable, ConnectionPropert
     private BooleanConnectionProperty dontCheckOnDuplicateKeyUpdateInSQL = new BooleanConnectionProperty("dontCheckOnDuplicateKeyUpdateInSQL", false,
             Messages.getString("ConnectionProperties.dontCheckOnDuplicateKeyUpdateInSQL"), "5.1.32", PERFORMANCE_CATEGORY, Integer.MIN_VALUE);
 
+    private BooleanConnectionProperty readOnlyPropagatesToServer = new BooleanConnectionProperty("readOnlyPropagatesToServer", true,
+            Messages.getString("ConnectionProperties.readOnlyPropagatesToServer"), "5.1.35", PERFORMANCE_CATEGORY, Integer.MIN_VALUE);
+
+    private StringConnectionProperty enabledSSLCipherSuites = new StringConnectionProperty("enabledSSLCipherSuites", null,
+            Messages.getString("ConnectionProperties.enabledSSLCipherSuites"), "5.1.35", SECURITY_CATEGORY, 11);
+
     protected DriverPropertyInfo[] exposeAsDriverPropertyInfoInternal(Properties info, int slotsToReserve) throws SQLException {
         initializeProperties(info);
 
@@ -1353,7 +1365,7 @@ public class ConnectionPropertiesImpl implements Serializable, ConnectionPropert
      * @see com.mysql.jdbc.IConnectionProperties#exposeAsXml()
      */
     public String exposeAsXml() throws SQLException {
-        StringBuffer xmlBuf = new StringBuffer();
+        StringBuilder xmlBuf = new StringBuilder();
         xmlBuf.append("<ConnectionProperties>");
 
         int numPropertiesToSet = PROPERTY_LIST.size();
@@ -3551,6 +3563,42 @@ public class ConnectionPropertiesImpl implements Serializable, ConnectionPropert
     /*
      * (non-Javadoc)
      * 
+     * @see com.mysql.jdbc.IConnectionProperties#getNoTimezoneConversionForDateType()
+     */
+    public boolean getNoTimezoneConversionForDateType() {
+        return this.noTimezoneConversionForDateType.getValueAsBoolean();
+    }
+
+    /*
+     * (non-Javadoc)
+     * 
+     * @see com.mysql.jdbc.IConnectionProperties#setNoTimezoneConversionForDateType(boolean)
+     */
+    public void setNoTimezoneConversionForDateType(boolean flag) {
+        this.noTimezoneConversionForDateType.setValue(flag);
+    }
+
+    /*
+     * (non-Javadoc)
+     * 
+     * @see com.mysql.jdbc.IConnectionProperties#getCacheDefaultTimezone()
+     */
+    public boolean getCacheDefaultTimezone() {
+        return this.cacheDefaultTimezone.getValueAsBoolean();
+    }
+
+    /*
+     * (non-Javadoc)
+     * 
+     * @see com.mysql.jdbc.IConnectionProperties#setCacheDefaultTimezone(boolean)
+     */
+    public void setCacheDefaultTimezone(boolean flag) {
+        this.cacheDefaultTimezone.setValue(flag);
+    }
+
+    /*
+     * (non-Javadoc)
+     * 
      * @see com.mysql.jdbc.IConnectionProperties#getUseJDBCCompliantTimezoneShift()
      */
     public boolean getUseJDBCCompliantTimezoneShift() {
@@ -4781,5 +4829,21 @@ public class ConnectionPropertiesImpl implements Serializable, ConnectionPropert
 
     public int getSocksProxyPort() {
         return this.socksProxyPort.getValueAsInt();
+    }
+
+    public boolean getReadOnlyPropagatesToServer() {
+        return this.readOnlyPropagatesToServer.getValueAsBoolean();
+    }
+
+    public void setReadOnlyPropagatesToServer(boolean flag) {
+        this.readOnlyPropagatesToServer.setValue(flag);
+    }
+
+    public String getEnabledSSLCipherSuites() {
+        return this.enabledSSLCipherSuites.getValueAsString();
+    }
+
+    public void setEnabledSSLCipherSuites(String cipherSuites) {
+        this.enabledSSLCipherSuites.setValue(cipherSuites);
     }
 }

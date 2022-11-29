@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2010, 2014, Oracle and/or its affiliates. All rights reserved.
+  Copyright (c) 2010, 2015, Oracle and/or its affiliates. All rights reserved.
 
   The MySQL Connector/J is licensed under the terms of the GPLv2
   <http://www.gnu.org/licenses/old-licenses/gpl-2.0.html>, like most MySQL Connectors.
@@ -51,7 +51,7 @@ public interface MySQLConnection extends Connection, ConnectionProperties {
 
     String extractSqlFromPacket(String possibleSqlQuery, Buffer queryPacket, int endOfQueryPacketPosition) throws SQLException;
 
-    StringBuffer generateConnectionCommentBlock(StringBuffer buf);
+    StringBuilder generateConnectionCommentBlock(StringBuilder buf);
 
     int getActiveStatementCount();
 
@@ -197,7 +197,10 @@ public interface MySQLConnection extends Connection, ConnectionProperties {
 
     String getConnectionAttributes() throws SQLException;
 
+    @Deprecated
     MySQLConnection getLoadBalanceSafeProxy();
+
+    MySQLConnection getMultiHostSafeProxy();
 
     ProfilerEventHandler getProfilerEventHandlerInstance();
 

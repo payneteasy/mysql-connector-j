@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2002, 2014, Oracle and/or its affiliates. All rights reserved.
+  Copyright (c) 2002, 2015, Oracle and/or its affiliates. All rights reserved.
 
   The MySQL Connector/J is licensed under the terms of the GPLv2
   <http://www.gnu.org/licenses/old-licenses/gpl-2.0.html>, like most MySQL Connectors.
@@ -142,7 +142,7 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements j
         }
     }
 
-    class ParseInfo {
+    public static final class ParseInfo {
         char firstStmtChar = 0;
 
         boolean foundLoadData = false;
@@ -165,6 +165,8 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements j
 
         boolean parametersInDuplicateKeyClause = false;
 
+        String charEncoding;
+
         /**
          * Represents the "parsed" state of a client-side prepared statement, with the statement broken up into it's static and dynamic (where parameters are
          * bound) parts.
@@ -178,9 +180,10 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements j
             try {
                 if (sql == null) {
                     throw SQLError.createSQLException(Messages.getString("PreparedStatement.61"), SQLError.SQL_STATE_ILLEGAL_ARGUMENT,
-                            getExceptionInterceptor());
+                            conn.getExceptionInterceptor());
                 }
 
+                this.charEncoding = encoding;
                 this.lastUsed = System.currentTimeMillis();
 
                 String quotedIdentifierString = dbmd.getIdentifierQuoteString();
@@ -200,7 +203,7 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements j
                 int lastParmEnd = 0;
                 int i;
 
-                boolean noBackslashEscapes = PreparedStatement.this.connection.isNoBackslashEscapesSet();
+                boolean noBackslashEscapes = conn.isNoBackslashEscapesSet();
 
                 // we're not trying to be real pedantic here, but we'd like to  skip comments at the beginning of statements, as frameworks such as Hibernate
                 // use them to aid in debugging
@@ -216,7 +219,8 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements j
 
                         // no need to search for "ON DUPLICATE KEY UPDATE" if not an INSERT statement
                         if (this.firstStmtChar == 'I') {
-                            this.locationOfOnDuplicateKeyUpdate = getOnDuplicateKeyLocation(sql);
+                            this.locationOfOnDuplicateKeyUpdate = getOnDuplicateKeyLocation(sql, conn.getDontCheckOnDuplicateKeyUpdateInSQL(),
+                                    conn.getRewriteBatchedStatements(), conn.isNoBackslashEscapesSet());
                             this.isOnDuplicateKeyUpdate = this.locationOfOnDuplicateKeyUpdate != -1;
                         }
                     }
@@ -331,11 +335,11 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements j
                         this.staticSql[i] = buf;
                     } else {
                         if (converter != null) {
-                            this.staticSql[i] = StringUtils.getBytes(sql, converter, encoding, PreparedStatement.this.connection.getServerCharset(), begin,
-                                    len, PreparedStatement.this.connection.parserKnowsUnicode(), getExceptionInterceptor());
+                            this.staticSql[i] = StringUtils.getBytes(sql, converter, encoding, conn.getServerCharset(), begin, len, conn.parserKnowsUnicode(),
+                                    conn.getExceptionInterceptor());
                         } else {
-                            this.staticSql[i] = StringUtils.getBytes(sql, encoding, PreparedStatement.this.connection.getServerCharset(), begin, len,
-                                    PreparedStatement.this.connection.parserKnowsUnicode(), conn, getExceptionInterceptor());
+                            this.staticSql[i] = StringUtils.getBytes(sql, encoding, conn.getServerCharset(), begin, len, conn.parserKnowsUnicode(), conn,
+                                    conn.getExceptionInterceptor());
                         }
                     }
                 }
@@ -364,7 +368,7 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements j
 
         private void buildRewriteBatchedParams(String sql, MySQLConnection conn, DatabaseMetaData metadata, String encoding,
                 SingleByteCharsetConverter converter) throws SQLException {
-            this.valuesClause = extractValuesClause(sql);
+            this.valuesClause = extractValuesClause(sql, conn.getMetaData().getIdentifierQuoteString());
             String odkuClause = this.isOnDuplicateKeyUpdate ? sql.substring(this.locationOfOnDuplicateKeyUpdate) : null;
 
             String headSql = null;
@@ -384,29 +388,27 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements j
             }
         }
 
-        private String extractValuesClause(String sql) throws SQLException {
-            String quoteCharStr = PreparedStatement.this.connection.getMetaData().getIdentifierQuoteString();
-
+        private String extractValuesClause(String sql, String quoteCharStr) throws SQLException {
             int indexOfValues = -1;
             int valuesSearchStart = this.statementStartPos;
 
             while (indexOfValues == -1) {
                 if (quoteCharStr.length() > 0) {
-                    indexOfValues = StringUtils.indexOfIgnoreCase(valuesSearchStart, PreparedStatement.this.originalSql, "VALUES", quoteCharStr, quoteCharStr,
+                    indexOfValues = StringUtils.indexOfIgnoreCase(valuesSearchStart, sql, "VALUES", quoteCharStr, quoteCharStr,
                             StringUtils.SEARCH_MODE__MRK_COM_WS);
                 } else {
-                    indexOfValues = StringUtils.indexOfIgnoreCase(valuesSearchStart, PreparedStatement.this.originalSql, "VALUES");
+                    indexOfValues = StringUtils.indexOfIgnoreCase(valuesSearchStart, sql, "VALUES");
                 }
 
                 if (indexOfValues > 0) {
                     /* check if the char immediately preceding VALUES may be part of the table name */
-                    char c = PreparedStatement.this.originalSql.charAt(indexOfValues - 1);
+                    char c = sql.charAt(indexOfValues - 1);
                     if (!(Character.isWhitespace(c) || c == ')' || c == '`')) {
                         valuesSearchStart = indexOfValues + 6;
                         indexOfValues = -1;
                     } else {
                         /* check if the char immediately following VALUES may be whitespace or open parenthesis */
-                        c = PreparedStatement.this.originalSql.charAt(indexOfValues + 6);
+                        c = sql.charAt(indexOfValues + 6);
                         if (!(Character.isWhitespace(c) || c == '(')) {
                             valuesSearchStart = indexOfValues + 6;
                             indexOfValues = -1;
@@ -477,10 +479,10 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements j
                 size++; // for the '?'
             }
 
-            StringBuffer buf = new StringBuffer(size);
+            StringBuilder buf = new StringBuilder(size);
 
             for (int i = 0; i < sqlStringsLength - 1; i++) {
-                buf.append(StringUtils.toString(sqlStrings[i], PreparedStatement.this.charEncoding));
+                buf.append(StringUtils.toString(sqlStrings[i], this.charEncoding));
                 buf.append("?");
             }
 
@@ -572,7 +574,7 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements j
         abstract BatchVisitor merge(byte[] begin, byte[] end);
     }
 
-    class AppendingBatchVisitor implements BatchVisitor {
+    static class AppendingBatchVisitor implements BatchVisitor {
         LinkedList<byte[]> statementComponents = new LinkedList<byte[]>();
 
         public BatchVisitor append(byte[] values) {
@@ -610,7 +612,7 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements j
 
         @Override
         public String toString() {
-            StringBuffer buf = new StringBuffer();
+            StringBuilder buf = new StringBuilder();
             Iterator<byte[]> iter = this.statementComponents.iterator();
             while (iter.hasNext()) {
                 buf.append(StringUtils.toString(iter.next()));
@@ -705,6 +707,10 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements j
 
     private SimpleDateFormat tsdf = null;
 
+    private SimpleDateFormat ddf;
+
+    private SimpleDateFormat tdf;
+
     /**
      * Are we using a version of MySQL where we can use 'true' boolean values?
      */
@@ -715,8 +721,6 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements j
     protected String batchedValuesClause;
 
     private boolean doPingInstead;
-    private SimpleDateFormat ddf;
-    private SimpleDateFormat tdf;
 
     private boolean compensateForOnDuplicateKeyUpdate = false;
 
@@ -919,7 +923,7 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements j
     public String asSql(boolean quoteStreamsAndUnknowns) throws SQLException {
         synchronized (checkClosed().getConnectionMutex()) {
 
-            StringBuffer buf = new StringBuffer();
+            StringBuilder buf = new StringBuilder();
 
             try {
                 int realParameterCount = this.parameterCount + getParameterIndexOffset();
@@ -1470,7 +1474,7 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements j
 
     private String generateMultiStatementForBatch(int numBatches) throws SQLException {
         synchronized (checkClosed().getConnectionMutex()) {
-            StringBuffer newStatementSql = new StringBuffer((this.originalSql.length() + 1) * numBatches);
+            StringBuilder newStatementSql = new StringBuilder((this.originalSql.length() + 1) * numBatches);
 
             newStatementSql.append(this.originalSql);
 
@@ -2452,14 +2456,14 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements j
         Object[] nv = new Object[3];
         Object[] v;
         nv[0] = Character.valueOf('y');
-        nv[1] = new StringBuffer();
+        nv[1] = new StringBuilder();
         nv[2] = Integer.valueOf(0);
         vec.add(nv);
 
         if (toTime) {
             nv = new Object[3];
             nv[0] = Character.valueOf('h');
-            nv[1] = new StringBuffer();
+            nv[1] = new StringBuilder();
             nv[2] = Integer.valueOf(0);
             vec.add(nv);
         }
@@ -2477,7 +2481,7 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements j
                     if ((c == ((Character) v[0]).charValue()) && (c != 'S')) {
                         vecRemovelist.add(v);
                     } else {
-                        ((StringBuffer) v[1]).append(separator);
+                        ((StringBuilder) v[1]).append(separator);
 
                         if ((c == 'X') || (c == 'Y')) {
                             v[2] = Integer.valueOf(4);
@@ -2487,20 +2491,20 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements j
                     if (c == 'X') {
                         c = 'y';
                         nv = new Object[3];
-                        nv[1] = (new StringBuffer(((StringBuffer) v[1]).toString())).append('M');
+                        nv[1] = (new StringBuilder(((StringBuilder) v[1]).toString())).append('M');
                         nv[0] = Character.valueOf('M');
                         nv[2] = Integer.valueOf(1);
                         vec.add(nv);
                     } else if (c == 'Y') {
                         c = 'M';
                         nv = new Object[3];
-                        nv[1] = (new StringBuffer(((StringBuffer) v[1]).toString())).append('d');
+                        nv[1] = (new StringBuilder(((StringBuilder) v[1]).toString())).append('d');
                         nv[0] = Character.valueOf('d');
                         nv[2] = Integer.valueOf(1);
                         vec.add(nv);
                     }
 
-                    ((StringBuffer) v[1]).append(c);
+                    ((StringBuilder) v[1]).append(c);
 
                     if (c == ((Character) v[0]).charValue()) {
                         v[2] = Integer.valueOf(n + 1);
@@ -2531,7 +2535,7 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements j
             boolean bk = getSuccessor(c, n) != c;
             boolean atEnd = (((c == 's') || (c == 'm') || ((c == 'h') && toTime)) && bk);
             boolean finishesAtDate = (bk && (c == 'd') && !toTime);
-            boolean containsEnd = (((StringBuffer) v[1]).toString().indexOf('W') != -1);
+            boolean containsEnd = (((StringBuilder) v[1]).toString().indexOf('W') != -1);
 
             if ((!atEnd && !finishesAtDate) || (containsEnd)) {
                 vecRemovelist.add(v);
@@ -2547,7 +2551,7 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements j
         vecRemovelist.clear();
         v = vec.get(0); // might throw exception
 
-        StringBuffer format = (StringBuffer) v[1];
+        StringBuilder format = (StringBuilder) v[1];
         format.setLength(format.length() - 1);
 
         return format.toString();
@@ -3196,7 +3200,7 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements j
                     } else {
                         c = new char[4096];
 
-                        StringBuffer buf = new StringBuffer();
+                        StringBuilder buf = new StringBuilder();
 
                         while ((len = reader.read(c)) != -1) {
                             buf.append(c, 0, len);
@@ -3291,17 +3295,21 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements j
         if (x == null) {
             setNull(parameterIndex, java.sql.Types.DATE);
         } else {
-            checkClosed();
-
             if (!this.useLegacyDatetimeCode) {
                 newSetDateInternal(parameterIndex, x, cal);
             } else {
-                // FIXME: Have instance version of this, problem as it's
-                // not thread-safe :(
-                SimpleDateFormat dateFormatter = new SimpleDateFormat("''yyyy-MM-dd''", Locale.US);
-                setInternal(parameterIndex, dateFormatter.format(x));
+                synchronized (checkClosed().getConnectionMutex()) {
+                    if (this.ddf == null) {
+                        this.ddf = new SimpleDateFormat("''yyyy-MM-dd''", Locale.US);
+                    }
+                    if (cal != null) {
+                        this.ddf.setTimeZone(cal.getTimeZone());
+                    }
 
-                this.parameterTypes[parameterIndex - 1 + getParameterIndexOffset()] = Types.DATE;
+                    setInternal(parameterIndex, this.ddf.format(x));
+
+                    this.parameterTypes[parameterIndex - 1 + getParameterIndexOffset()] = Types.DATE;
+                }
             }
         }
     }
@@ -3965,7 +3973,7 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements j
                     if (!needsHexEscape) {
                         byte[] parameterAsBytes = null;
 
-                        StringBuffer quotedString = new StringBuffer(x.length() + 2);
+                        StringBuilder quotedString = new StringBuilder(x.length() + 2);
                         quotedString.append('\'');
                         quotedString.append(x);
                         quotedString.append('\'');
@@ -4002,7 +4010,7 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements j
                 if (this.isLoadDataQuery || isEscapeNeededForString(x, stringLength)) {
                     needsQuoted = false; // saves an allocation later
 
-                    StringBuffer buf = new StringBuffer((int) (x.length() * 1.1));
+                    StringBuilder buf = new StringBuilder((int) (x.length() * 1.1));
 
                     buf.append('\'');
 
@@ -4169,7 +4177,9 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements j
      *             if a database-access error occurs.
      */
     public void setTime(int parameterIndex, java.sql.Time x, Calendar cal) throws SQLException {
-        setTimeInternal(parameterIndex, x, cal, cal.getTimeZone(), true);
+        synchronized (checkClosed().getConnectionMutex()) {
+            setTimeInternal(parameterIndex, x, cal, cal.getTimeZone(), true);
+        }
     }
 
     /**
@@ -4185,7 +4195,9 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements j
      *             if a database access error occurs
      */
     public void setTime(int parameterIndex, Time x) throws java.sql.SQLException {
-        setTimeInternal(parameterIndex, x, null, Util.getDefaultTimeZone(), false);
+        synchronized (checkClosed().getConnectionMutex()) {
+            setTimeInternal(parameterIndex, x, null, this.connection.getDefaultTimeZone(), false);
+        }
     }
 
     /**
@@ -4204,27 +4216,22 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements j
      *             if a database access error occurs
      */
     private void setTimeInternal(int parameterIndex, Time x, Calendar targetCalendar, TimeZone tz, boolean rollForward) throws java.sql.SQLException {
-        synchronized (checkClosed().getConnectionMutex()) {
-            if (x == null) {
-                setNull(parameterIndex, java.sql.Types.TIME);
+        if (x == null) {
+            setNull(parameterIndex, java.sql.Types.TIME);
+        } else {
+            checkClosed();
+
+            if (!this.useLegacyDatetimeCode) {
+                newSetTimeInternal(parameterIndex, x, targetCalendar);
             } else {
-                checkClosed();
+                Calendar sessionCalendar = getCalendarInstanceForSessionOrNew();
 
-                if (!this.useLegacyDatetimeCode) {
-                    newSetTimeInternal(parameterIndex, x, targetCalendar);
-                } else {
-                    Calendar sessionCalendar = getCalendarInstanceForSessionOrNew();
+                x = TimeUtil.changeTimezone(this.connection, sessionCalendar, targetCalendar, x, tz, this.connection.getServerTimezoneTZ(), rollForward);
 
-                    synchronized (sessionCalendar) {
-                        x = TimeUtil
-                                .changeTimezone(this.connection, sessionCalendar, targetCalendar, x, tz, this.connection.getServerTimezoneTZ(), rollForward);
-                    }
-
-                    setInternal(parameterIndex, "'" + x.toString() + "'");
-                }
-
-                this.parameterTypes[parameterIndex - 1 + getParameterIndexOffset()] = Types.TIME;
+                setInternal(parameterIndex, "'" + x.toString() + "'");
             }
+
+            this.parameterTypes[parameterIndex - 1 + getParameterIndexOffset()] = Types.TIME;
         }
     }
 
@@ -4243,7 +4250,9 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements j
      *             if a database-access error occurs.
      */
     public void setTimestamp(int parameterIndex, java.sql.Timestamp x, Calendar cal) throws SQLException {
-        setTimestampInternal(parameterIndex, x, cal, cal.getTimeZone(), true);
+        synchronized (checkClosed().getConnectionMutex()) {
+            setTimestampInternal(parameterIndex, x, cal, cal.getTimeZone(), true);
+        }
     }
 
     /**
@@ -4259,7 +4268,9 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements j
      *             if a database access error occurs
      */
     public void setTimestamp(int parameterIndex, Timestamp x) throws java.sql.SQLException {
-        setTimestampInternal(parameterIndex, x, null, Util.getDefaultTimeZone(), false);
+        synchronized (checkClosed().getConnectionMutex()) {
+            setTimestampInternal(parameterIndex, x, null, this.connection.getDefaultTimeZone(), false);
+        }
     }
 
     /**
@@ -4277,53 +4288,48 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements j
      *             if a database-access error occurs.
      */
     private void setTimestampInternal(int parameterIndex, Timestamp x, Calendar targetCalendar, TimeZone tz, boolean rollForward) throws SQLException {
-        synchronized (checkClosed().getConnectionMutex()) {
-            if (x == null) {
-                setNull(parameterIndex, java.sql.Types.TIMESTAMP);
+        if (x == null) {
+            setNull(parameterIndex, java.sql.Types.TIMESTAMP);
+        } else {
+            checkClosed();
+
+            if (!this.useLegacyDatetimeCode) {
+                newSetTimestampInternal(parameterIndex, x, targetCalendar);
             } else {
-                checkClosed();
+                Calendar sessionCalendar = this.connection.getUseJDBCCompliantTimezoneShift() ? this.connection.getUtcCalendar()
+                        : getCalendarInstanceForSessionOrNew();
 
-                if (!this.useLegacyDatetimeCode) {
-                    newSetTimestampInternal(parameterIndex, x, targetCalendar);
+                x = TimeUtil.changeTimezone(this.connection, sessionCalendar, targetCalendar, x, tz, this.connection.getServerTimezoneTZ(), rollForward);
+
+                if (this.connection.getUseSSPSCompatibleTimezoneShift()) {
+                    doSSPSCompatibleTimezoneShift(parameterIndex, x, sessionCalendar);
                 } else {
-                    Calendar sessionCalendar = this.connection.getUseJDBCCompliantTimezoneShift() ? this.connection.getUtcCalendar()
-                            : getCalendarInstanceForSessionOrNew();
-
-                    synchronized (sessionCalendar) {
-                        x = TimeUtil
-                                .changeTimezone(this.connection, sessionCalendar, targetCalendar, x, tz, this.connection.getServerTimezoneTZ(), rollForward);
-                    }
-
-                    if (this.connection.getUseSSPSCompatibleTimezoneShift()) {
-                        doSSPSCompatibleTimezoneShift(parameterIndex, x, sessionCalendar);
-                    } else {
-                        synchronized (this) {
-                            if (this.tsdf == null) {
-                                this.tsdf = new SimpleDateFormat("''yyyy-MM-dd HH:mm:ss", Locale.US);
-                            }
-
-                            StringBuffer buf = new StringBuffer();
-                            buf.append(this.tsdf.format(x));
-
-                            if (this.serverSupportsFracSecs) {
-                                int nanos = x.getNanos();
-
-                                if (nanos != 0) {
-                                    buf.append('.');
-                                    buf.append(TimeUtil.formatNanos(nanos, this.serverSupportsFracSecs, true));
-                                }
-                            }
-
-                            buf.append('\'');
-
-                            setInternal(parameterIndex, buf.toString()); // SimpleDateFormat is not
-                                                                         // thread-safe
+                    synchronized (this) {
+                        if (this.tsdf == null) {
+                            this.tsdf = new SimpleDateFormat("''yyyy-MM-dd HH:mm:ss", Locale.US);
                         }
+
+                        StringBuffer buf = new StringBuffer();
+                        buf.append(this.tsdf.format(x));
+
+                        if (this.serverSupportsFracSecs) {
+                            int nanos = x.getNanos();
+
+                            if (nanos != 0) {
+                                buf.append('.');
+                                buf.append(TimeUtil.formatNanos(nanos, this.serverSupportsFracSecs, true));
+                            }
+                        }
+
+                        buf.append('\'');
+
+                        setInternal(parameterIndex, buf.toString()); // SimpleDateFormat is not
+                                                                     // thread-safe
                     }
                 }
-
-                this.parameterTypes[parameterIndex - 1 + getParameterIndexOffset()] = Types.TIMESTAMP;
             }
+
+            this.parameterTypes[parameterIndex - 1 + getParameterIndexOffset()] = Types.TIMESTAMP;
         }
     }
 
@@ -4333,20 +4339,14 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements j
                 this.tsdf = new SimpleDateFormat("''yyyy-MM-dd HH:mm:ss", Locale.US);
             }
 
-            String timestampString = null;
-
             if (targetCalendar != null) {
-                targetCalendar.setTime(x);
                 this.tsdf.setTimeZone(targetCalendar.getTimeZone());
-
-                timestampString = this.tsdf.format(x);
             } else {
                 this.tsdf.setTimeZone(this.connection.getServerTimezoneTZ());
-                timestampString = this.tsdf.format(x);
             }
 
             StringBuffer buf = new StringBuffer();
-            buf.append(timestampString);
+            buf.append(this.tsdf.format(x));
             buf.append('.');
             buf.append(TimeUtil.formatNanos(x.getNanos(), this.serverSupportsFracSecs, true));
             buf.append('\'');
@@ -4359,22 +4359,15 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements j
         synchronized (checkClosed().getConnectionMutex()) {
             if (this.tdf == null) {
                 this.tdf = new SimpleDateFormat("''HH:mm:ss''", Locale.US);
-
             }
-
-            String timeString = null;
 
             if (targetCalendar != null) {
-                targetCalendar.setTime(x);
                 this.tdf.setTimeZone(targetCalendar.getTimeZone());
-
-                timeString = this.tdf.format(x);
             } else {
                 this.tdf.setTimeZone(this.connection.getServerTimezoneTZ());
-                timeString = this.tdf.format(x);
             }
 
-            setInternal(parameterIndex, timeString);
+            setInternal(parameterIndex, this.tdf.format(x));
         }
     }
 
@@ -4384,19 +4377,15 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements j
                 this.ddf = new SimpleDateFormat("''yyyy-MM-dd''", Locale.US);
             }
 
-            String timeString = null;
-
             if (targetCalendar != null) {
-                targetCalendar.setTime(x);
                 this.ddf.setTimeZone(targetCalendar.getTimeZone());
-
-                timeString = this.ddf.format(x);
+            } else if (this.connection.getNoTimezoneConversionForDateType()) {
+                this.ddf.setTimeZone(this.connection.getDefaultTimeZone());
             } else {
                 this.ddf.setTimeZone(this.connection.getServerTimezoneTZ());
-                timeString = this.ddf.format(x);
             }
 
-            setInternal(parameterIndex, timeString);
+            setInternal(parameterIndex, this.ddf.format(x));
         }
     }
 
@@ -4419,7 +4408,7 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements j
                     int minute = sessionCalendar2.get(Calendar.MINUTE);
                     int seconds = sessionCalendar2.get(Calendar.SECOND);
 
-                    StringBuffer tsBuf = new StringBuffer();
+                    StringBuilder tsBuf = new StringBuilder();
 
                     tsBuf.append('\'');
                     tsBuf.append(year);
@@ -4471,7 +4460,7 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements j
                     setInternal(parameterIndex, tsBuf.toString());
 
                 } finally {
-                    sessionCalendar.setTime(oldTime);
+                    sessionCalendar2.setTime(oldTime);
                 }
             }
         }
@@ -4686,7 +4675,7 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements j
      */
     @Override
     public String toString() {
-        StringBuffer buf = new StringBuffer();
+        StringBuilder buf = new StringBuilder();
         buf.append(super.toString());
         buf.append(": ");
 
@@ -4781,7 +4770,7 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements j
                 // Ignore sql_mode=NO_BACKSLASH_ESCAPES in current implementation.
 
                 // Add introducer _utf8 for NATIONAL CHARACTER
-                StringBuffer buf = new StringBuffer((int) (x.length() * 1.1 + 4));
+                StringBuilder buf = new StringBuilder((int) (x.length() * 1.1 + 4));
                 buf.append("_utf8");
                 buf.append('\'');
 
@@ -4908,7 +4897,7 @@ public class PreparedStatement extends com.mysql.jdbc.StatementImpl implements j
                     } else {
                         c = new char[4096];
 
-                        StringBuffer buf = new StringBuffer();
+                        StringBuilder buf = new StringBuilder();
 
                         while ((len = reader.read(c)) != -1) {
                             buf.append(c, 0, len);

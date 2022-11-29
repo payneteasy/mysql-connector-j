@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2002, 2014, Oracle and/or its affiliates. All rights reserved.
+  Copyright (c) 2002, 2015, Oracle and/or its affiliates. All rights reserved.
 
   The MySQL Connector/J is licensed under the terms of the GPLv2
   <http://www.gnu.org/licenses/old-licenses/gpl-2.0.html>, like most MySQL Connectors.
@@ -55,6 +55,7 @@ import javax.sql.rowset.CachedRowSet;
 
 import testsuite.BaseTestCase;
 
+import com.mysql.jdbc.CommunicationsException;
 import com.mysql.jdbc.ExceptionInterceptor;
 import com.mysql.jdbc.Messages;
 import com.mysql.jdbc.MysqlDataTruncation;
@@ -1091,7 +1092,7 @@ public class ResultSetRegressionTest extends BaseTestCase {
             sjisStmt = sjisConn.createStatement(ResultSet.TYPE_SCROLL_INSENSITIVE, ResultSet.CONCUR_UPDATABLE);
 
             sjisStmt.executeUpdate("DROP TABLE IF EXISTS testBug6743");
-            StringBuffer queryBuf = new StringBuffer("CREATE TABLE testBug6743 (pkField INT NOT NULL PRIMARY KEY, field1 VARCHAR(32)");
+            StringBuilder queryBuf = new StringBuilder("CREATE TABLE testBug6743 (pkField INT NOT NULL PRIMARY KEY, field1 VARCHAR(32)");
 
             if (versionMeetsMinimum(4, 1)) {
                 queryBuf.append(" CHARACTER SET SJIS");
@@ -2107,7 +2108,7 @@ public class ResultSetRegressionTest extends BaseTestCase {
 
             boolean firstColumn = true;
             int numCols = 1;
-            StringBuffer createStatement = new StringBuffer("CREATE TABLE testAllTypes (");
+            StringBuilder createStatement = new StringBuilder("CREATE TABLE testAllTypes (");
             List<Boolean> wasDatetimeTypeList = new ArrayList<Boolean>();
 
             while (this.rs.next()) {
@@ -2150,7 +2151,7 @@ public class ResultSetRegressionTest extends BaseTestCase {
             stmt2.executeUpdate("DROP TABLE IF EXISTS testAllTypes");
 
             stmt2.executeUpdate(createStatement.toString());
-            StringBuffer insertStatement = new StringBuffer("INSERT INTO testAllTypes VALUES (NULL");
+            StringBuilder insertStatement = new StringBuilder("INSERT INTO testAllTypes VALUES (NULL");
             for (int i = 1; i < numCols - 1; i++) {
                 insertStatement.append(", NULL");
             }
@@ -2167,7 +2168,7 @@ public class ResultSetRegressionTest extends BaseTestCase {
 
             stmt2.executeUpdate("DELETE FROM testAllTypes");
 
-            insertStatement = new StringBuffer("INSERT INTO testAllTypes VALUES (");
+            insertStatement = new StringBuilder("INSERT INTO testAllTypes VALUES (");
 
             boolean needsNow = wasDatetimeTypeList.get(0).booleanValue();
 
@@ -3140,7 +3141,7 @@ public class ResultSetRegressionTest extends BaseTestCase {
 
         createTable("testBug25517", "(field1 int)");
 
-        StringBuffer insertBuf = new StringBuffer("INSERT INTO testBug25517 VALUES (1)");
+        StringBuilder insertBuf = new StringBuilder("INSERT INTO testBug25517 VALUES (1)");
 
         for (int i = 0; i < 100; i++) {
             insertBuf.append(",(" + i + ")");
@@ -3286,8 +3287,7 @@ public class ResultSetRegressionTest extends BaseTestCase {
 
             advisorStmt = advisorConn.createStatement();
 
-            StringBuffer advisorBuf = new StringBuffer();
-            StandardLogger.bufferedLog = advisorBuf;
+            StandardLogger.startLoggingToBuffer();
 
             this.rs = advisorStmt.executeQuery("SELECT 1, 2 LIMIT 0");
             this.rs.next();
@@ -3303,8 +3303,6 @@ public class ResultSetRegressionTest extends BaseTestCase {
             this.rs.next();
             this.rs.close();
 
-            StandardLogger.bufferedLog = null;
-
             if (versionMeetsMinimum(5, 0, 2)) {
                 advisorConn.close();
 
@@ -3317,15 +3315,15 @@ public class ResultSetRegressionTest extends BaseTestCase {
                 advisorStmt.setFetchSize(1);
 
                 this.rs = advisorStmt.executeQuery("SELECT 1, 2 LIMIT 0");
-                advisorBuf = new StringBuffer();
-                StandardLogger.bufferedLog = advisorBuf;
+                StandardLogger.startLoggingToBuffer();
                 this.rs.next();
                 this.rs.close();
             }
 
-            assertEquals(-1, advisorBuf.toString().indexOf(Messages.getString("ResultSet.Possible_incomplete_traversal_of_result_set").substring(0, 10)));
+            assertEquals(-1,
+                    StandardLogger.getBuffer().toString().indexOf(Messages.getString("ResultSet.Possible_incomplete_traversal_of_result_set").substring(0, 10)));
         } finally {
-            StandardLogger.bufferedLog = null;
+            StandardLogger.dropBuffer();
 
             if (advisorStmt != null) {
                 advisorStmt.close();
@@ -4620,4 +4618,162 @@ public class ResultSetRegressionTest extends BaseTestCase {
         }
         testConn.close();
     }
+
+    /**
+     * Tests fix for BUG#75309 - mysql connector/J driver in streaming mode will in the blocking state.
+     * 
+     * @throws Exception
+     *             if the test fails.
+     */
+    public void testBug75309() throws Exception {
+        if (!versionMeetsMinimum(5, 5)) {
+            return;
+        }
+
+        Connection testConn = getConnectionWithProps("socketTimeout=1000");
+        Statement testStmt = testConn.createStatement();
+
+        // turn on streaming results.
+        testStmt.setFetchSize(Integer.MIN_VALUE);
+
+        final ResultSet testRs1 = testStmt.executeQuery("SELECT 1 + 18446744073709551615");
+
+        assertThrows(SQLException.class, "Data truncation: BIGINT UNSIGNED value is out of range in '\\(1 \\+ 18446744073709551615\\)'", new Callable<Void>() {
+            public Void call() throws Exception {
+                testRs1.next();
+                return null;
+            }
+        });
+
+        try {
+            testRs1.close();
+        } catch (CommunicationsException ex) {
+            fail("ResultSet.close() locked while trying to read remaining, nonexistent, streamed data.");
+        }
+
+        try {
+            ResultSet testRs2 = testStmt.executeQuery("SELECT 1");
+            assertTrue(testRs2.next());
+            assertEquals(1, testRs2.getInt(1));
+            testRs2.close();
+        } catch (SQLException ex) {
+            if (ex.getMessage().startsWith("Streaming result set")) {
+                fail("There is a Streaming result set still active. No other statements can be issued on this connection.");
+            } else {
+                ex.printStackTrace();
+                fail(ex.getMessage());
+            }
+        }
+
+        testStmt.close();
+        testConn.close();
+    }
+
+    /**
+     * Tests fix for BUG#19536760 - GETSTRING() CALL AFTER RS.RELATIVE() RETURNS NULLPOINTEREXCEPTION
+     * 
+     * @throws Exception
+     *             if the test fails.
+     */
+    public void testBug19536760() throws Exception {
+
+        createTable("testBug19536760", "(id int)");
+
+        this.stmt.execute("insert into testBug19536760 values(1),(2),(3)");
+        this.rs = this.stmt.executeQuery("select * from testBug19536760");
+
+        // "before first" check
+        testBug19536760CheckStates(this.rs, true, false, false, false);
+
+        assertFalse(this.rs.previous());
+        assertFalse(this.rs.previous());
+        assertFalse(this.rs.previous());
+        testBug19536760CheckStates(this.rs, true, false, false, false);
+
+        assertFalse(this.rs.absolute(-7));
+        testBug19536760CheckStates(this.rs, true, false, false, false);
+
+        assertTrue(this.rs.next());
+        this.rs.beforeFirst();
+        testBug19536760CheckStates(this.rs, true, false, false, false);
+
+        // "first" check
+        this.rs.next();
+        testBug19536760CheckStates(this.rs, false, true, false, false);
+
+        this.rs.absolute(-3);
+        testBug19536760CheckStates(this.rs, false, true, false, false);
+
+        assertTrue(this.rs.relative(1));
+        assertTrue(this.rs.previous());
+        testBug19536760CheckStates(this.rs, false, true, false, false);
+
+        this.rs.absolute(2);
+        testBug19536760CheckStates(this.rs, false, false, false, false);
+        this.rs.first();
+        testBug19536760CheckStates(this.rs, false, true, false, false);
+
+        // "last" check
+        this.rs.absolute(-1);
+        testBug19536760CheckStates(this.rs, false, false, true, false);
+
+        assertFalse(this.rs.next());
+        testBug19536760CheckStates(this.rs, false, false, false, true);
+        assertTrue(this.rs.previous());
+        testBug19536760CheckStates(this.rs, false, false, true, false);
+
+        assertFalse(this.rs.relative(1));
+        testBug19536760CheckStates(this.rs, false, false, false, true);
+        assertTrue(this.rs.relative(-1));
+        testBug19536760CheckStates(this.rs, false, false, true, false);
+
+        assertTrue(this.rs.relative(-1));
+        testBug19536760CheckStates(this.rs, false, false, false, false);
+        this.rs.last();
+        testBug19536760CheckStates(this.rs, false, false, true, false);
+
+        // "after last" check
+        assertFalse(this.rs.next());
+        assertFalse(this.rs.next());
+        assertFalse(this.rs.next());
+        testBug19536760CheckStates(this.rs, false, false, false, true);
+
+        assertTrue(this.rs.relative(-1));
+        testBug19536760CheckStates(this.rs, false, false, true, false);
+
+        assertFalse(this.rs.relative(3));
+        testBug19536760CheckStates(this.rs, false, false, false, true);
+
+        assertTrue(this.rs.previous());
+        testBug19536760CheckStates(this.rs, false, false, true, false);
+
+        this.rs.afterLast();
+        testBug19536760CheckStates(this.rs, false, false, false, true);
+
+        assertFalse(this.rs.next());
+        testBug19536760CheckStates(this.rs, false, false, false, true);
+
+        // empty result set
+        this.rs = this.stmt.executeQuery("select * from testBug19536760 where id=5");
+        assertFalse(this.rs.first());
+        assertFalse(this.rs.last());
+
+        testBug19536760CheckStates(this.rs, false, false, false, false);
+
+        assertFalse(this.rs.next());
+        testBug19536760CheckStates(this.rs, false, false, false, false);
+
+        assertFalse(this.rs.relative(2));
+        testBug19536760CheckStates(this.rs, false, false, false, false);
+
+    }
+
+    private void testBug19536760CheckStates(ResultSet rset, boolean expectedIsBeforeFirst, boolean expectedIsFirst, boolean expectedIsLast,
+            boolean expectedIsAfterLast) throws Exception {
+        assertEquals(expectedIsBeforeFirst, rset.isBeforeFirst());
+        assertEquals(expectedIsFirst, rset.isFirst());
+        assertEquals(expectedIsLast, rset.isLast());
+        assertEquals(expectedIsAfterLast, rset.isAfterLast());
+    }
+
 }

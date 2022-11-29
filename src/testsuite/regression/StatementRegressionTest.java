@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2002, 2014, Oracle and/or its affiliates. All rights reserved.
+  Copyright (c) 2002, 2015, Oracle and/or its affiliates. All rights reserved.
 
   The MySQL Connector/J is licensed under the terms of the GPLv2
   <http://www.gnu.org/licenses/old-licenses/gpl-2.0.html>, like most MySQL Connectors.
@@ -71,6 +71,7 @@ import testsuite.UnreliableSocketFactory;
 
 import com.mysql.jdbc.CachedResultSetMetaData;
 import com.mysql.jdbc.CharsetMapping;
+import com.mysql.jdbc.CommunicationsException;
 import com.mysql.jdbc.Field;
 import com.mysql.jdbc.MySQLConnection;
 import com.mysql.jdbc.NonRegisteringDriver;
@@ -168,7 +169,7 @@ public class StatementRegressionTest extends BaseTestCase {
 
     private void doGGKTestPreparedStatement(int[] values, boolean useUpdate) throws Exception {
         // Generate the the multiple replace command
-        StringBuffer cmd = new StringBuffer("REPLACE INTO testggk VALUES ");
+        StringBuilder cmd = new StringBuilder("REPLACE INTO testggk VALUES ");
         int newKeys = 0;
 
         for (int i = 0; i < values.length; i++) {
@@ -203,7 +204,7 @@ public class StatementRegressionTest extends BaseTestCase {
         System.out.println("Expect " + newKeys + " generated keys, starting from " + nextID);
 
         this.rs = pStmt.getGeneratedKeys();
-        StringBuffer res = new StringBuffer("Got keys");
+        StringBuilder res = new StringBuilder("Got keys");
 
         int[] generatedKeys = new int[newKeys];
         int i = 0;
@@ -241,7 +242,7 @@ public class StatementRegressionTest extends BaseTestCase {
 
     private void doGGKTestStatement(int[] values, boolean useUpdate) throws Exception {
         // Generate the the multiple replace command
-        StringBuffer cmd = new StringBuffer("REPLACE INTO testggk VALUES ");
+        StringBuilder cmd = new StringBuilder("REPLACE INTO testggk VALUES ");
         int newKeys = 0;
 
         for (int i = 0; i < values.length; i++) {
@@ -274,7 +275,7 @@ public class StatementRegressionTest extends BaseTestCase {
         System.out.println("Expect " + newKeys + " generated keys, starting from " + nextID);
 
         this.rs = this.stmt.getGeneratedKeys();
-        StringBuffer res = new StringBuffer("Got keys");
+        StringBuilder res = new StringBuilder("Got keys");
 
         int[] generatedKeys = new int[newKeys];
         int i = 0;
@@ -332,7 +333,7 @@ public class StatementRegressionTest extends BaseTestCase {
     }
 
     private String getByteArrayString(byte[] ba) {
-        StringBuffer buffer = new StringBuffer();
+        StringBuilder buffer = new StringBuilder();
         if (ba != null) {
             for (int i = 0; i < ba.length; i++) {
                 buffer.append("0x" + Integer.toHexString(ba[i] & 0xff) + " ");
@@ -444,7 +445,7 @@ public class StatementRegressionTest extends BaseTestCase {
             stmt2.getWarnings();
             fail("Should've caught an exception here");
         } catch (SQLException sqlEx) {
-            assertEquals("08003", sqlEx.getSQLState());
+            assertEquals(SQLError.SQL_STATE_ILLEGAL_ARGUMENT, sqlEx.getSQLState());
         } finally {
             if (stmt2 != null) {
                 stmt2.close();
@@ -1331,7 +1332,7 @@ public class StatementRegressionTest extends BaseTestCase {
             this.stmt.executeUpdate("DROP TABLE IF EXISTS testBug3697");
             this.stmt.executeUpdate("CREATE TABLE testBug3697 (field1 VARCHAR(255))");
 
-            StringBuffer updateBuf = new StringBuffer("INSERT INTO testBug3697 VALUES ('");
+            StringBuilder updateBuf = new StringBuilder("INSERT INTO testBug3697 VALUES ('");
 
             for (int i = 0; i < 512; i++) {
                 updateBuf.append("A");
@@ -2283,10 +2284,10 @@ public class StatementRegressionTest extends BaseTestCase {
 
             out.close();
 
-            StringBuffer fileNameBuf = null;
+            StringBuilder fileNameBuf = null;
 
             if (File.separatorChar == '\\') {
-                fileNameBuf = new StringBuffer();
+                fileNameBuf = new StringBuilder();
 
                 String fileName = tempFile.getAbsolutePath();
                 int fileNameLength = fileName.length();
@@ -2301,7 +2302,7 @@ public class StatementRegressionTest extends BaseTestCase {
                     }
                 }
             } else {
-                fileNameBuf = new StringBuffer(tempFile.getAbsolutePath());
+                fileNameBuf = new StringBuilder(tempFile.getAbsolutePath());
             }
 
             int updateCount = this.stmt.executeUpdate("LOAD DATA LOCAL INFILE '" + fileNameBuf.toString() + "' INTO TABLE loadDataRegress CHARACTER SET "
@@ -2816,7 +2817,7 @@ public class StatementRegressionTest extends BaseTestCase {
             try {
                 pStmt.clearParameters();
             } catch (SQLException sqlEx) {
-                assertEquals("08003", sqlEx.getSQLState());
+                assertEquals(SQLError.SQL_STATE_ILLEGAL_ARGUMENT, sqlEx.getSQLState());
             }
 
             pStmt = ((com.mysql.jdbc.Connection) this.conn).clientPrepareStatement("INSERT INTO testBug17857 VALUES (?)");
@@ -2824,7 +2825,7 @@ public class StatementRegressionTest extends BaseTestCase {
             try {
                 pStmt.clearParameters();
             } catch (SQLException sqlEx) {
-                assertEquals("08003", sqlEx.getSQLState());
+                assertEquals(SQLError.SQL_STATE_ILLEGAL_ARGUMENT, sqlEx.getSQLState());
             }
 
         } finally {
@@ -5578,7 +5579,7 @@ public class StatementRegressionTest extends BaseTestCase {
         String db = parsed.getProperty(NonRegisteringDriver.DBNAME_PROPERTY_KEY);
         String port = parsed.getProperty(NonRegisteringDriver.PORT_PROPERTY_KEY);
         String host = getPortFreeHostname(props, d);
-        UnreliableSocketFactory.flushAllHostLists();
+        UnreliableSocketFactory.flushAllStaticData();
         UnreliableSocketFactory.mapHost("first", host);
         props.remove(NonRegisteringDriver.HOST_PROPERTY_KEY);
 
@@ -7255,5 +7256,97 @@ public class StatementRegressionTest extends BaseTestCase {
                 throw e;
             }
         }
+    }
+
+    /**
+     * Tests fix for BUG#74998 - readRemainingMultiPackets not computed correctly for rows larger than 16 MB.
+     * 
+     * This bug is observed only when a multipacket uses packets 127 and 128. It happens due to the transition from positive to negative values in a signed byte
+     * numeric value (127 + 1 == -128).
+     * 
+     * The test case forces a multipacket to use packets 127, 128 and 129, where packet 129 is 0-length, this being another boundary case.
+     * Query (*1) generates the following MySQL protocol packets from the server:
+     * - Packets 1 to 4 contain protocol control data and results metadata info. (*2)
+     * - Packets 5 to 126 contain each row "X". (*3)
+     * - Packets 127 to 129 contain row "Y..." as a multipacket (size("Y...") = 32*1024*1024-15 requires 3 packets). (*4)
+     * - Packet 130 contains row "Z". (*5)
+     * 
+     * @throws Exception
+     *             if the test fails.
+     */
+    public void testBug74998() throws Exception {
+        int maxAllowedPacketAtServer = Integer.parseInt(((MySQLConnection) this.conn).getServerVariable("max_allowed_packet"));
+        int maxAllowedPacketMinimumForTest = 32 * 1024 * 1024;
+        if (maxAllowedPacketAtServer < maxAllowedPacketMinimumForTest) {
+            fail("You need to increase max_allowed_packet to at least " + maxAllowedPacketMinimumForTest + " before running this test!");
+        }
+
+        createTable("testBug74998", "(id INTEGER NOT NULL AUTO_INCREMENT PRIMARY KEY, data LONGBLOB)"); // (*2)
+
+        StringBuilder query = new StringBuilder("INSERT INTO testBug74998 (data) VALUES ('X')");
+        for (int i = 0; i < 121; i++) {
+            query.append(",('X')");
+        }
+        assertEquals(122, this.stmt.executeUpdate(query.toString())); // (*3)
+
+        int lengthOfRowForMultiPacket = maxAllowedPacketMinimumForTest - 15; // 32MB - 15Bytes causes an empty packet at the end of the multipacket sequence
+
+        this.stmt.executeUpdate("INSERT INTO testBug74998 (data) VALUES (REPEAT('Y', " + lengthOfRowForMultiPacket + "))"); // (*4)
+        this.stmt.executeUpdate("INSERT INTO testBug74998 (data) VALUES ('Z')"); // (*5)
+
+        try {
+            this.rs = this.stmt.executeQuery("SELECT id, data FROM testBug74998 ORDER BY id"); // (*1)
+        } catch (CommunicationsException e) {
+            if (e.getCause() instanceof IOException && "Packets received out of order".compareTo(e.getCause().getMessage()) == 0) {
+                fail("Failed to correctly fetch all data from communications layer due to wrong processing of muli-packet number.");
+            } else {
+                throw e;
+            }
+        }
+
+        // safety check
+        for (int i = 1; i <= 122; i++) {
+            assertTrue(this.rs.next());
+            assertEquals(i, this.rs.getInt(1));
+            assertEquals("X", this.rs.getString(2));
+        }
+        assertTrue(this.rs.next());
+        assertEquals(123, this.rs.getInt(1));
+        assertEquals("YYYYY", this.rs.getString(2).substring(0, 5));
+        assertEquals("YYYYY", this.rs.getString(2).substring(lengthOfRowForMultiPacket - 5));
+        assertTrue(this.rs.next());
+        assertEquals(124, this.rs.getInt(1));
+        assertEquals("Z", this.rs.getString(2));
+        assertFalse(this.rs.next());
+    }
+
+    /**
+     * Tests fix for BUG#54095 - Unnecessary call in newSetTimestampInternal.
+     *
+     * This bug was fixed as a consequence of the patch for Bug#71084.
+     *
+     * @throws Exception
+     *             if the test fails.
+     */
+    public void testBug54095() throws Exception {
+        Connection testConn = getConnectionWithProps("useLegacyDatetimeCode=false");
+
+        Calendar testCal = Calendar.getInstance();
+        java.util.Date origDate = testCal.getTime();
+
+        PreparedStatement testPstmt = testConn.prepareStatement("SELECT ?");
+        testPstmt.setTimestamp(1, new Timestamp(0), testCal);
+        assertEquals("Calendar object shouldn't have changed after PreparedStatement.setTimestamp().", origDate, testCal.getTime());
+
+        ResultSet testRs = testPstmt.executeQuery();
+        testRs.next();
+        assertEquals("Calendar object shouldn't have changed after PreparedStatement.executeQuery().", origDate, testCal.getTime());
+
+        testRs.getTimestamp(1, testCal);
+        assertEquals("Calendar object shouldn't have changed after ResultSet.getTimestamp().", origDate, testCal.getTime());
+
+        testRs.close();
+        testPstmt.close();
+        testConn.close();
     }
 }

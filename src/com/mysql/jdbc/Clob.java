@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2002, 2014, Oracle and/or its affiliates. All rights reserved.
+  Copyright (c) 2002, 2015, Oracle and/or its affiliates. All rights reserved.
 
   The MySQL Connector/J is licensed under the terms of the GPLv2
   <http://www.gnu.org/licenses/old-licenses/gpl-2.0.html>, like most MySQL Connectors.
@@ -107,7 +107,7 @@ public class Clob implements java.sql.Clob, OutputStreamWatcher, WriterWatcher {
      * @see java.sql.Clob#position(Clob, long)
      */
     public long position(java.sql.Clob arg0, long arg1) throws SQLException {
-        return position(arg0.getSubString(0L, (int) arg0.length()), arg1);
+        return position(arg0.getSubString(1L, (int) arg0.length()), arg1);
     }
 
     /**
@@ -183,7 +183,7 @@ public class Clob implements java.sql.Clob, OutputStreamWatcher, WriterWatcher {
             throw SQLError.createSQLException(Messages.getString("Clob.3"), SQLError.SQL_STATE_ILLEGAL_ARGUMENT, this.exceptionInterceptor);
         }
 
-        StringBuffer charBuf = new StringBuffer(this.charData);
+        StringBuilder charBuf = new StringBuilder(this.charData);
 
         pos--;
 
@@ -208,13 +208,17 @@ public class Clob implements java.sql.Clob, OutputStreamWatcher, WriterWatcher {
             throw SQLError.createSQLException(Messages.getString("Clob.5"), SQLError.SQL_STATE_ILLEGAL_ARGUMENT, this.exceptionInterceptor);
         }
 
-        StringBuffer charBuf = new StringBuffer(this.charData);
+        StringBuilder charBuf = new StringBuilder(this.charData);
 
         pos--;
 
-        String replaceString = str.substring(offset, len);
+        try {
+            String replaceString = str.substring(offset, offset + len);
 
-        charBuf.replace((int) pos, (int) (pos + replaceString.length()), replaceString);
+            charBuf.replace((int) pos, (int) (pos + replaceString.length()), replaceString);
+        } catch (StringIndexOutOfBoundsException e) {
+            throw SQLError.createSQLException(e.getMessage(), SQLError.SQL_STATE_ILLEGAL_ARGUMENT, e, this.exceptionInterceptor);
+        }
 
         this.charData = charBuf.toString();
 
