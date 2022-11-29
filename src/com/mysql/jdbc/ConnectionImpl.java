@@ -271,7 +271,7 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements MySQLCon
     /**
      * Actual collation index to collation name map for given server URLs.
      */
-    private static final Map<String, Map<Long, String>> dynamicIndexToCollationMapByUrl = new HashMap<String, Map<Long, String>>();
+    private static final Map<String, Map<Number, String>> dynamicIndexToCollationMapByUrl = new HashMap<String, Map<Number, String>>();
 
     /**
      * Actual collation index to mysql charset name map for given server URLs.
@@ -927,7 +927,7 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements MySQLCon
     private void buildCollationMapping() throws SQLException {
 
         Map<Integer, String> indexToCharset = null;
-        Map<Long, String> sortedCollationMap = null;
+        Map<Number, String> sortedCollationMap = null;
         Map<Integer, String> customCharset = null;
         Map<String, Integer> customMblen = null;
 
@@ -949,7 +949,7 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements MySQLCon
                 java.sql.ResultSet results = null;
 
                 try {
-                    sortedCollationMap = new TreeMap<Long, String>();
+                    sortedCollationMap = new TreeMap<Number, String>();
                     customCharset = new HashMap<Integer, String>();
                     customMblen = new HashMap<String, Integer>();
 
@@ -970,8 +970,8 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements MySQLCon
                         }
                     }
 
-                    for (Iterator<Map.Entry<Long, String>> indexIter = sortedCollationMap.entrySet().iterator(); indexIter.hasNext();) {
-                        Map.Entry<Long, String> indexEntry = indexIter.next();
+                    for (Iterator<Map.Entry<Number, String>> indexIter = sortedCollationMap.entrySet().iterator(); indexIter.hasNext();) {
+                        Map.Entry<Number, String> indexEntry = indexIter.next();
 
                         int collationIndex = indexEntry.getKey().intValue();
                         String charsetName = indexEntry.getValue();
@@ -3432,7 +3432,7 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements MySQLCon
         }
 
         if (versionMeetsMinimum(5, 0, 0) && (getUseLocalTransactionState() || getElideSetAutoCommits()) && isQueryCacheEnabled()
-                && !versionMeetsMinimum(6, 0, 10)) {
+                && !versionMeetsMinimum(5, 1, 32)) {
             // Can't trust the server status flag on the wire if query cache is enabled, due to Bug#36326
             setUseLocalTransactionState(false);
             setElideSetAutoCommits(false);
@@ -4311,7 +4311,7 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements MySQLCon
 
     public void recachePreparedStatement(ServerPreparedStatement pstmt) throws SQLException {
         synchronized (getConnectionMutex()) {
-            if (pstmt.isPoolable()) {
+            if (getCachePreparedStatements() && pstmt.isPoolable()) {
                 synchronized (this.serverSideStatementCache) {
                     this.serverSideStatementCache.put(pstmt.originalSql, pstmt);
                 }
@@ -4321,7 +4321,7 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements MySQLCon
 
     public void decachePreparedStatement(ServerPreparedStatement pstmt) throws SQLException {
         synchronized (getConnectionMutex()) {
-            if (pstmt.isPoolable()) {
+            if (getCachePreparedStatements() && pstmt.isPoolable()) {
                 synchronized (this.serverSideStatementCache) {
                     this.serverSideStatementCache.remove(pstmt.originalSql);
                 }
