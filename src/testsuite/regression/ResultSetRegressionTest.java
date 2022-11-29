@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2002, 2016, Oracle and/or its affiliates. All rights reserved.
+  Copyright (c) 2002, 2017, Oracle and/or its affiliates. All rights reserved.
 
   The MySQL Connector/J is licensed under the terms of the GPLv2
   <http://www.gnu.org/licenses/old-licenses/gpl-2.0.html>, like most MySQL Connectors.
@@ -24,6 +24,9 @@
 package testsuite.regression;
 
 import java.io.Reader;
+import java.lang.management.ManagementFactory;
+import java.lang.management.ThreadInfo;
+import java.lang.management.ThreadMXBean;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.math.BigDecimal;
@@ -49,6 +52,7 @@ import java.util.Locale;
 import java.util.Properties;
 import java.util.TimeZone;
 import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -5271,5 +5275,112 @@ public class ResultSetRegressionTest extends BaseTestCase {
             assertEquals(e, this.rs.getString(2));
         }
         assertFalse(this.rs.next());
+    }
+
+    /**
+     * Tests fix for Bug#83368 - 5.1.40 regression: wasNull not updated when calling getInt for a bit column.
+     */
+    public void testBug83368() throws Exception {
+        createTable("testBug83368", "(c1 VARCHAR(1), c2 BIT)");
+        this.stmt.execute("INSERT INTO testBug83368 VALUES (NULL, 1)");
+        this.rs = this.stmt.executeQuery("SELECT * FROM testBug83368");
+
+        assertTrue(this.rs.next());
+
+        assertNull(this.rs.getString(1));
+        assertTrue(this.rs.wasNull());
+        assertEquals((byte) 1, this.rs.getByte(2));
+        assertFalse(this.rs.wasNull());
+
+        assertNull(this.rs.getString(1));
+        assertTrue(this.rs.wasNull());
+        assertEquals((short) 1, this.rs.getShort(2));
+        assertFalse(this.rs.wasNull());
+
+        assertNull(this.rs.getString(1));
+        assertTrue(this.rs.wasNull());
+        assertEquals(1, this.rs.getInt(2));
+        assertFalse(this.rs.wasNull());
+
+        assertNull(this.rs.getString(1));
+        assertTrue(this.rs.wasNull());
+        assertEquals(1L, this.rs.getLong(2));
+        assertFalse(this.rs.wasNull());
+
+        assertNull(this.rs.getString(1));
+        assertTrue(this.rs.wasNull());
+        assertEquals(BigDecimal.valueOf(1), this.rs.getBigDecimal(2));
+        assertFalse(this.rs.wasNull());
+    }
+
+    /**
+     * Tests fix for Bug#83662 - NullPointerException while reading NULL boolean value from DB.
+     * 
+     * This fix was actually done in the patch for Bug#83368, as both are fixed in the same way.
+     */
+    public void testBug83662() throws Exception {
+        createTable("testBug83662", "(b BIT(1) NULL)");
+        this.stmt.executeUpdate("INSERT INTO testBug83662 VALUES (null)");
+
+        this.rs = this.stmt.executeQuery("SELECT * FROM testBug83662");
+        assertTrue(this.rs.next());
+        assertEquals((byte) 0, this.rs.getByte(1));
+        assertEquals((short) 0, this.rs.getShort(1));
+        assertEquals(0, this.rs.getInt(1));
+        assertEquals(0L, this.rs.getLong(1));
+        assertEquals(0, this.rs.getInt(1));
+        assertNull(this.rs.getBigDecimal(1));
+    }
+
+    /**
+     * Tests fix for Bug#70704 - Deadlock using UpdatableResultSet.
+     * 
+     * Doesn't actually test the buggy behavior since it is not verifiable since the fix for Bug#59462 (revision 385a151). However, the patch for this fix is
+     * needed because the synchronization in UpdatableResultSet was dated.
+     * This test makes sure there is no regression.
+     * 
+     * WARNING! If this test fails there is no guarantee that the JVM will remain stable and won't affect any other tests. It is imperative that this test
+     * passes to ensure other tests results.
+     */
+    public void testBug70704() throws Exception {
+        for (int i = 0; i < 100; i++) {
+            final Statement testStmt = this.conn.createStatement(ResultSet.TYPE_SCROLL_INSENSITIVE, ResultSet.CONCUR_UPDATABLE);
+            final ResultSet testRs = testStmt.executeQuery("SELECT 1");
+
+            ExecutorService executorService = Executors.newFixedThreadPool(2);
+
+            executorService.submit(new Callable<Void>() {
+                public Void call() throws Exception {
+                    testStmt.close();
+                    return null;
+                }
+            });
+
+            executorService.submit(new Callable<Void>() {
+                public Void call() throws Exception {
+                    testRs.close();
+                    return null;
+                }
+            });
+
+            executorService.shutdown();
+            if (!executorService.awaitTermination(2, TimeUnit.SECONDS)) {
+                ThreadMXBean threadMXBean = ManagementFactory.getThreadMXBean();
+                long[] threadIds = threadMXBean.findMonitorDeadlockedThreads();
+                if (threadIds != null) {
+                    System.err.println("Deadlock detected!");
+                    ThreadInfo[] threadInfos = threadMXBean.getThreadInfo(threadIds, Integer.MAX_VALUE);
+                    for (ThreadInfo ti : threadInfos) {
+                        System.err.println();
+                        System.err.println(ti);
+                        System.err.println("Stack trace:");
+                        for (StackTraceElement ste : ti.getStackTrace()) {
+                            System.err.println("   " + ste);
+                        }
+                    }
+                    fail("Unexpected deadlock detected. Consult system output for more details. WARNING: this failure may lead to JVM instability.");
+                }
+            }
+        }
     }
 }

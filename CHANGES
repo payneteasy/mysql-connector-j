@@ -1,5 +1,41 @@
 # Changelog
-# $Id$
+# https://dev.mysql.com/doc/relnotes/connector-j/5.1/en/
+
+Version 5.1.42
+
+  - Fix for Bug#73775 (19531384), DBMD.getProcedureColumns()/.getFunctionColumns() fail to filter by columnPattern.
+
+  - Fix for Bug#84324 (25321524), CallableStatement.extractProcedureName() not work when catalog name with dash.
+
+  - Fix for Bug#79561 (22333996), NullPointerException when calling a fully qualified stored procedure.
+
+  - Fix for Bug#84783 (25490163), query timeout is not working(thread hang).
+
+  - Fix for Bug#70704 (17653733), Deadlock using UpdatableResultSet.
+
+  - Fix for Bug#66430 (16714868), setCatalog on connection leaves ServerPreparedStatement cache for old catalog.
+
+  - Fix for Bug#83662 (25048406), NullPointerException while reading NULL boolean value from DB.
+
+  - Fix for Bug#83368 (24841670), 5.1.40 regression: wasNull not updated when calling getInt for a bit column.
+
+  - Added static mapping for utf8mb4_ja_0900_as_cs collation.
+
+  - Fix for Bug#84189 (25250938), Allow null when extracting java.time.* classes from ResultSet.
+    Thanks to Martin Desharnais for his contribution.
+
+  - Fix for Bug#70808 (17757070), Set sessionVariables in a single query.
+
+  - Fix for Bug#77192 (21170603), Description for the Property replicationConnetionGroup Missing from the Manual.
+
+  - Fix for Bug#83834 (25101890), Typo in Connector/J error message.
+
+  - Fix for Bug#25636947, CONNECTION USING MYSQL CLIENT FAILS IF WE USE THE SSL CERTIFICATES FROM C/J SRC.
+
+  - Fix for Bug#25687718, INCORRECT TIME ZONE IDENTIFIER IN STATEMENTREGRESSIONTEST.
+
+  - Fix for Bug#25556597, RESULTSETTEST.TESTPADDING UNIT TEST IS FAILING IN 5.1.41 RELEASE PACKAGE.
+
 02-28-17 - Version 5.1.41
 
   - Fix for Bug#25517837, CONNECT PERFORMNACE DEGRADED BY 10% IN 5.1.41.

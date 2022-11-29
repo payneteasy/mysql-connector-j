@@ -127,6 +127,10 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements MySQLCon
         return this.getProxy();
     }
 
+    public MySQLConnection getActiveMySQLConnection() {
+        return this;
+    }
+
     public Object getConnectionMutex() {
         return (this.realProxy != null) ? this.realProxy : getProxy();
     }
@@ -365,23 +369,8 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements MySQLCon
     public Timer getCancelTimer() {
         synchronized (getConnectionMutex()) {
             if (this.cancelTimer == null) {
-                boolean createdNamedTimer = false;
-
-                // Use reflection magic to try this on JDK's 1.5 and newer, fallback to non-named timer on older VMs.
-                try {
-                    Constructor<Timer> ctr = Timer.class.getConstructor(new Class[] { String.class, Boolean.TYPE });
-
-                    this.cancelTimer = ctr.newInstance(new Object[] { "MySQL Statement Cancellation Timer", Boolean.TRUE });
-                    createdNamedTimer = true;
-                } catch (Throwable t) {
-                    createdNamedTimer = false;
-                }
-
-                if (!createdNamedTimer) {
-                    this.cancelTimer = new Timer(true);
-                }
+                this.cancelTimer = new Timer("MySQL Statement Cancellation Timer", true);
             }
-
             return this.cancelTimer;
         }
     }
@@ -3546,7 +3535,7 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements MySQLCon
                     }
                 } catch (SQLException ex1) {
                     if (ex1.getErrorCode() != MysqlErrorNumbers.ER_MUST_CHANGE_PASSWORD || getDisconnectOnExpiredPasswords()) {
-                        throw SQLError.createSQLException("Could not retrieve transation read-only status server", SQLError.SQL_STATE_GENERAL_ERROR, ex1,
+                        throw SQLError.createSQLException("Could not retrieve transaction read-only status from server", SQLError.SQL_STATE_GENERAL_ERROR, ex1,
                                 getExceptionInterceptor());
                     }
                 }
@@ -4063,7 +4052,8 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements MySQLCon
             if (this.useServerPreparedStmts && canServerPrepare) {
                 if (this.getCachePreparedStatements()) {
                     synchronized (this.serverSideStatementCache) {
-                        pStmt = (com.mysql.jdbc.ServerPreparedStatement) this.serverSideStatementCache.remove(sql);
+                        pStmt = (com.mysql.jdbc.ServerPreparedStatement) this.serverSideStatementCache
+                                .remove(makePreparedStatementCacheKey(this.database, sql));
 
                         if (pStmt != null) {
                             ((com.mysql.jdbc.ServerPreparedStatement) pStmt).setClosed(false);
@@ -4253,11 +4243,18 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements MySQLCon
 
     }
 
+    private String makePreparedStatementCacheKey(String catalog, String query) {
+        StringBuilder key = new StringBuilder();
+        key.append("/*").append(catalog).append("*/");
+        key.append(query);
+        return key.toString();
+    }
+
     public void recachePreparedStatement(ServerPreparedStatement pstmt) throws SQLException {
         synchronized (getConnectionMutex()) {
             if (getCachePreparedStatements() && pstmt.isPoolable()) {
                 synchronized (this.serverSideStatementCache) {
-                    this.serverSideStatementCache.put(pstmt.originalSql, pstmt);
+                    this.serverSideStatementCache.put(makePreparedStatementCacheKey(pstmt.currentCatalog, pstmt.originalSql), pstmt);
                 }
             }
         }
@@ -4267,7 +4264,7 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements MySQLCon
         synchronized (getConnectionMutex()) {
             if (getCachePreparedStatements() && pstmt.isPoolable()) {
                 synchronized (this.serverSideStatementCache) {
-                    this.serverSideStatementCache.remove(pstmt.originalSql);
+                    this.serverSideStatementCache.remove(makePreparedStatementCacheKey(pstmt.currentCatalog, pstmt.originalSql));
                 }
             }
         }
@@ -4648,7 +4645,6 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements MySQLCon
      * @see java.sql.Connection#prepareStatement(String)
      */
     public java.sql.PreparedStatement serverPrepareStatement(String sql) throws SQLException {
-
         String nativeSql = getProcessEscapeCodesForPrepStmts() ? nativeSQL(sql) : sql;
 
         return ServerPreparedStatement.getInstance(getMultiHostSafeProxy(), nativeSql, this.getCatalog(), DEFAULT_RESULT_SET_TYPE,
@@ -4983,31 +4979,35 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements MySQLCon
 
     private void setSessionVariables() throws SQLException {
         if (this.versionMeetsMinimum(4, 0, 0) && getSessionVariables() != null) {
-            List<String> variablesToSet = StringUtils.split(getSessionVariables(), ",", "\"'", "\"'", false);
+            List<String> variablesToSet = new ArrayList<String>();
+            for (String part : StringUtils.split(getSessionVariables(), ",", "\"'(", "\"')", "\"'", true)) {
+                variablesToSet.addAll(StringUtils.split(part, ";", "\"'(", "\"')", "\"'", true));
+            }
 
-            int numVariablesToSet = variablesToSet.size();
-
-            java.sql.Statement stmt = null;
-
-            try {
-                stmt = getMetadataSafeStatement();
-
-                for (int i = 0; i < numVariablesToSet; i++) {
-                    String variableValuePair = variablesToSet.get(i);
-
-                    if (variableValuePair.startsWith("@")) {
-                        stmt.executeUpdate("SET " + variableValuePair);
-                    } else {
-                        stmt.executeUpdate("SET SESSION " + variableValuePair);
+            if (!variablesToSet.isEmpty()) {
+                java.sql.Statement stmt = null;
+                try {
+                    stmt = getMetadataSafeStatement();
+                    StringBuilder query = new StringBuilder("SET ");
+                    String separator = "";
+                    for (String variableToSet : variablesToSet) {
+                        if (variableToSet.length() > 0) {
+                            query.append(separator);
+                            if (!variableToSet.startsWith("@")) {
+                                query.append("SESSION ");
+                            }
+                            query.append(variableToSet);
+                            separator = ",";
+                        }
                     }
-                }
-            } finally {
-                if (stmt != null) {
-                    stmt.close();
+                    stmt.executeUpdate(query.toString());
+                } finally {
+                    if (stmt != null) {
+                        stmt.close();
+                    }
                 }
             }
         }
-
     }
 
     /**

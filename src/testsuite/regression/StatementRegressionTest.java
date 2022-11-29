@@ -3873,7 +3873,7 @@ public class StatementRegressionTest extends BaseTestCase {
             assertEquals(earlier, timestampSeconds1);
 
             SimpleDateFormat sdf = new SimpleDateFormat("MM/dd/yyyy HH:mm z");
-            sdf.setTimeZone(TimeZone.getTimeZone("America/New York"));
+            sdf.setTimeZone(TimeZone.getTimeZone("America/New_York"));
             System.out.println(sdf.format(ts2));
             System.out.println(sdf.format(ts1));
         } finally {
@@ -8066,7 +8066,7 @@ public class StatementRegressionTest extends BaseTestCase {
     }
 
     /**
-     * Test fix for Bug#81706 - NullPointerException in driver.
+     * Tests fix for Bug#81706 - NullPointerException in driver.
      */
     public void testBug81706() throws Exception {
         boolean useSPS = false;
@@ -8139,5 +8139,155 @@ public class StatementRegressionTest extends BaseTestCase {
             }
             return super.preProcess(sql, interceptedStatement, connection);
         }
+    }
+
+    /**
+     * Tests fix for Bug#66430 - setCatalog on connection leaves ServerPreparedStatement cache for old catalog.
+     */
+    public void testBug66430() throws Exception {
+        createDatabase("testBug66430DB1");
+        createTable("testBug66430DB1.testBug66430", "(id INT)");
+        this.stmt.executeUpdate("INSERT INTO testBug66430DB1.testBug66430 VALUES (1)");
+
+        createDatabase("testBug66430DB2");
+        createTable("testBug66430DB2.testBug66430", "(id INT)");
+        this.stmt.executeUpdate("INSERT INTO testBug66430DB2.testBug66430 VALUES (2)");
+
+        boolean useSPS = false;
+        boolean cachePS = false;
+        do {
+            final String testCase = String.format("Case: [useSPS: %s, cachePS: %s ]", useSPS ? "Y" : "N", cachePS ? "Y" : "N");
+
+            Properties props = new Properties();
+            props.setProperty("cachePrepStmts", Boolean.toString(cachePS));
+            props.setProperty("useServerPrepStmts", Boolean.toString(useSPS));
+
+            Connection testConn = getConnectionWithProps(props);
+
+            testConn.setCatalog("testBug66430DB1");
+            PreparedStatement testPStmt = testConn.prepareStatement("SELECT * FROM testBug66430 WHERE id > ?");
+            testPStmt.setInt(1, 0);
+            this.rs = testPStmt.executeQuery();
+            assertTrue(testCase, this.rs.next());
+            assertEquals(testCase, 1, this.rs.getInt(1));
+            assertFalse(testCase, this.rs.next());
+            testPStmt.close();
+
+            testConn.setCatalog("testBug66430DB2");
+            testPStmt = testConn.prepareStatement("SELECT * FROM testBug66430 WHERE id > ?");
+            testPStmt.setInt(1, 0);
+            this.rs = testPStmt.executeQuery();
+            assertTrue(testCase, this.rs.next());
+            assertEquals(testCase, 2, this.rs.getInt(1));
+            assertFalse(testCase, this.rs.next());
+            testPStmt.close();
+
+            // Do it again to make sure cached prepared statements behave correctly.
+            testConn.setCatalog("testBug66430DB1");
+            testPStmt = testConn.prepareStatement("SELECT * FROM testBug66430 WHERE id > ?");
+            testPStmt.setInt(1, 0);
+            this.rs = testPStmt.executeQuery();
+            assertTrue(testCase, this.rs.next());
+            assertEquals(testCase, 1, this.rs.getInt(1));
+            assertFalse(testCase, this.rs.next());
+            testPStmt.close();
+
+            testConn.setCatalog("testBug66430DB2");
+            testPStmt = testConn.prepareStatement("SELECT * FROM testBug66430 WHERE id > ?");
+            testPStmt.setInt(1, 0);
+            this.rs = testPStmt.executeQuery();
+            assertTrue(testCase, this.rs.next());
+            assertEquals(testCase, 2, this.rs.getInt(1));
+            assertFalse(testCase, this.rs.next());
+            testPStmt.close();
+
+            testConn.close();
+        } while ((useSPS = !useSPS) || (cachePS = !cachePS));
+    }
+
+    /**
+     * Tests fix for Bug#84783 - query timeout is not working(thread hang).
+     */
+    public void testBug84783() throws Exception {
+        // Test using a standard connection.
+        final Statement testStmt = this.conn.createStatement();
+        testStmt.setQueryTimeout(1);
+        assertThrows(SQLException.class, "Statement cancelled due to timeout or client request", new Callable<Void>() {
+            public Void call() throws Exception {
+                testStmt.executeQuery("SELECT SLEEP(3)");
+                return null;
+            }
+        });
+        testStmt.close();
+
+        boolean useSPS = false;
+        do {
+            final Properties props = new Properties();
+            props.setProperty("useServerPrepStmts", Boolean.toString(useSPS));
+
+            final String testCase = String.format("Case [SPS: %s]", useSPS ? "Y" : "N");
+
+            Connection testConn;
+
+            // Test using a failover connection.
+            testConn = getUnreliableFailoverConnection(new String[] { "host1", "host2" }, null);
+            final Statement testStmtFO = testConn.createStatement();
+            testStmtFO.setQueryTimeout(1);
+            assertThrows(testCase, SQLException.class, "Statement cancelled due to timeout or client request", new Callable<Void>() {
+                public Void call() throws Exception {
+                    testStmtFO.executeQuery("SELECT SLEEP(3)");
+                    return null;
+                }
+            });
+            final PreparedStatement testPstmtFO = testConn.prepareStatement("SELECT SLEEP(3)");
+            testPstmtFO.setQueryTimeout(1);
+            assertThrows(testCase, SQLException.class, "Statement cancelled due to timeout or client request", new Callable<Void>() {
+                public Void call() throws Exception {
+                    testPstmtFO.executeQuery();
+                    return null;
+                }
+            });
+            testConn.close();
+
+            // Test using a load-balanced connection.
+            testConn = getUnreliableLoadBalancedConnection(new String[] { "host1", "host2" }, null);
+            final Statement testStmtLB = testConn.createStatement();
+            testStmtLB.setQueryTimeout(1);
+            assertThrows(testCase, SQLException.class, "Statement cancelled due to timeout or client request", new Callable<Void>() {
+                public Void call() throws Exception {
+                    testStmtLB.executeQuery("SELECT SLEEP(3)");
+                    return null;
+                }
+            });
+            final PreparedStatement testPstmtLB = testConn.prepareStatement("SELECT SLEEP(3)");
+            testPstmtLB.setQueryTimeout(1);
+            assertThrows(testCase, SQLException.class, "Statement cancelled due to timeout or client request", new Callable<Void>() {
+                public Void call() throws Exception {
+                    testPstmtLB.executeQuery();
+                    return null;
+                }
+            });
+            testConn.close();
+
+            // Test using a replication connection.
+            testConn = getUnreliableReplicationConnection(new String[] { "host1", "host2" }, null);
+            final Statement testStmtR = testConn.createStatement();
+            testStmtR.setQueryTimeout(1);
+            assertThrows(testCase, SQLException.class, "Statement cancelled due to timeout or client request", new Callable<Void>() {
+                public Void call() throws Exception {
+                    testStmtR.executeQuery("SELECT SLEEP(3)");
+                    return null;
+                }
+            });
+            final PreparedStatement testPstmtR = testConn.prepareStatement("SELECT SLEEP(3)");
+            testPstmtR.setQueryTimeout(1);
+            assertThrows(testCase, SQLException.class, "Statement cancelled due to timeout or client request", new Callable<Void>() {
+                public Void call() throws Exception {
+                    testPstmtR.executeQuery();
+                    return null;
+                }
+            });
+            testConn.close();
+        } while (useSPS = !useSPS);
     }
 }
