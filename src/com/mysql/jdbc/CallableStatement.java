@@ -144,6 +144,8 @@ public class CallableStatement extends PreparedStatement implements
 
 		boolean isFunctionCall;
 
+		boolean yearIsDateType;
+
 		String nativeSql;
 
 		int numParameters;
@@ -170,10 +172,11 @@ public class CallableStatement extends PreparedStatement implements
 		 * @param fullParamInfo the metadata for all parameters for this stored 
 		 * procedure or function.
 		 */
-		CallableStatementParamInfo(CallableStatementParamInfo fullParamInfo, String originalSql, String currentCatalog, int[] placeholderToParameterIndexMap) {
+		CallableStatementParamInfo(CallableStatementParamInfo fullParamInfo, String originalSql, String currentCatalog, int[] placeholderToParameterIndexMap, boolean yearIsDateType) {
 			this.nativeSql = originalSql;
 			this.catalogInUse = currentCatalog;
 			isFunctionCall = fullParamInfo.isFunctionCall;
+			this.yearIsDateType = yearIsDateType;
 			@SuppressWarnings("synthetic-access")
 			int[] localParameterMap = placeholderToParameterIndexMap;
 			int parameterMapLength = localParameterMap.length;
@@ -203,13 +206,14 @@ public class CallableStatement extends PreparedStatement implements
 		}
 		
 		@SuppressWarnings("synthetic-access")
-		CallableStatementParamInfo(java.sql.ResultSet paramTypesRs, String originalSql, String currentCatalog, boolean callingStoredFunction)
+		CallableStatementParamInfo(java.sql.ResultSet paramTypesRs, String originalSql, String currentCatalog, boolean callingStoredFunction, boolean yearIsDateType)
 				throws SQLException {
 			boolean hadRows = paramTypesRs.last();
 
 			this.nativeSql = originalSql;
 			this.catalogInUse = currentCatalog;
 			isFunctionCall = callingStoredFunction;
+			this.yearIsDateType = yearIsDateType;
 
 			if (hadRows) {
 				this.numParameters = paramTypesRs.getRow();
@@ -312,8 +316,8 @@ public class CallableStatement extends PreparedStatement implements
 				mysqlTypeIfKnown = MysqlDefs.FIELD_TYPE_INT24;
 			}
 			
-			return ResultSetMetaData.getClassNameForJavaType(getParameterType(arg0), 
-					isUnsigned, mysqlTypeIfKnown, isBinaryOrBlob, false);
+			return ResultSetMetaData.getClassNameForJavaType(getParameterType(arg0), isUnsigned, mysqlTypeIfKnown,
+					isBinaryOrBlob, false, yearIsDateType);
 		}
 
 		public int getParameterCount() throws SQLException {
@@ -386,11 +390,11 @@ public class CallableStatement extends PreparedStatement implements
 
 		CallableStatementParamInfoJDBC3(java.sql.ResultSet paramTypesRs)
 				throws SQLException {
-			super(paramTypesRs, originalSql, currentCatalog, callingStoredFunction);
+			super(paramTypesRs, originalSql, currentCatalog, callingStoredFunction, connection.getYearIsDateType());
 		}
 
 		public CallableStatementParamInfoJDBC3(CallableStatementParamInfo paramInfo) {
-			super(paramInfo, originalSql, currentCatalog, placeholderToParameterIndexMap);
+			super(paramInfo, originalSql, currentCatalog, placeholderToParameterIndexMap, connection.getYearIsDateType());
 		}
 		
 		/**
@@ -915,7 +919,7 @@ public class CallableStatement extends PreparedStatement implements
 				this.paramInfo = new CallableStatementParamInfoJDBC3(
 						paramTypesRs);
 			} else {
-				this.paramInfo = new CallableStatementParamInfo(paramTypesRs, originalSql, currentCatalog, callingStoredFunction);
+				this.paramInfo = new CallableStatementParamInfo(paramTypesRs, originalSql, currentCatalog, callingStoredFunction, connection.getYearIsDateType());
 			}
 		}
 	}
