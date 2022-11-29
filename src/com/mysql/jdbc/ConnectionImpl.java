@@ -3216,6 +3216,10 @@ public class ConnectionImpl extends ConnectionPropertiesImpl implements MySQLCon
         if (getCacheResultSetMetadata()) {
             this.resultSetMetadataCache = new LRUCache(getMetadataCacheSize());
         }
+
+        if (getSocksProxyHost() != null) {
+            setSocketFactoryClassName("com.mysql.jdbc.SocksProxySocketFactory");
+        }
     }
 
     /**
